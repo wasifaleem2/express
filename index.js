@@ -15,6 +15,7 @@ const url =
     useNewUrlParser: true,
     useUnifiedTopology: true,
 });
+console.log("checking")
 
 app.get('/', (req, res) => {
   res.send('Hello World!')
@@ -47,7 +48,7 @@ app.post('/save', (req, res) => {
 })
 
 // updating user in db using put method
-app.put('/update', (req, res) => {
+app.put('/update/:phone', (req, res) => {
   UserModel.findOneAndUpdate({phone: "333"}, {name: "Arsalan"})
     .then(()=>{
       res.status(200).send("updated");
