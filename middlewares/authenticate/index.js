@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const secret = 'my_secret_key';
+const AuthModel = require("../../models/AuthModel");
 
 // Authentication middleware
 function authenticate(req, res, next) {
@@ -12,22 +13,27 @@ function authenticate(req, res, next) {
     return res.sendStatus(401); // Unauthorized
   }
   // Verify the JWT using secret key and token
-  jwt.verify(token, secret, (err, user) => {
+  jwt.verify(token, secret, async (err, user) => {
     if (err) {
       return res.sendStatus(403); // Forbidden
     }
-    // Extract the payload of the token contains information/user that can be used
-    // ..if required using const phone = req.user.phone in other routes handling
-    console.log("user",user);
-    req.user = user;
-
-    // if you have a route handler that needs to make a request to another API endpoint
-    // JWT token can be passed in the headers
-    //  const token = req.headers['Authorization'];
-    req.headers['Authorization'] = `Bearer ${token}`;
-  
-    // next() is used to pass to the next middleware function or route
-    next();
+      // Extract the payload of the token contains information/user that can be used
+      // ..if required using const phone = req.user.phone in other routes handling
+      let ph = req.body.phone;
+      console.log("user",user);
+      const auth = await AuthModel.findOne({phone : ph})
+      if(user.phone == req.body.phone && auth.token == token){
+        // req.user = user; // saving user to req.user can be excess anywhere      
+        // if you have a route handler that needs to make a request to another API endpoint
+        // JWT token can be passed in the headers
+        //  const token = req.headers['Authorization'];
+        req.headers['Authorization'] = `Bearer ${token}`;
+        // next() is used to pass to the next middleware function or route
+        next();
+      }
+      else{
+        return res.sendStatus(403);
+      }
   });
 }
 

@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const UserModel = require("../../models/UserModel");
+const AuthModel = require("../../models/AuthModel")
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
@@ -62,7 +63,19 @@ const verifyUser = async (req, res) => {
         {
             const token = jwt.sign(payload, secretKey, { expiresIn: '24h' });
             console.log(token)
-            res.status(200).send(token);
+            AuthModel.findOneAndUpdate(
+                { phone: ph },  // condition to check for existing document
+                { $set: {phone: ph, token: token} },  // update operation
+                { upsert: true, new: true },)
+            .then(() => {
+                req.user = payload;
+                console.log("req.user",req.user);
+                res.status(200).send(token);
+            })
+            .catch((error) => {
+                res.status(500).send(error);
+            })
+            // res.status(200).send(token);
         }
         else{
             res.status(200).send("No User Found");
