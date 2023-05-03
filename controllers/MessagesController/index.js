@@ -5,8 +5,9 @@ const jwt = require('jsonwebtoken');
 const MessageModel = require("../../models/MessagesModel");
 
 const getMessage = (req, res) => {
+    // console.log("users@@", req.user)
     const phone = req.user.phone
-    console.log(phone)
+    // console.log(phone)
     MessageModel.find({ $or: [{ senderNumber: phone }, { receiverNumber: phone }] })
         .exec()
         .then((msgs) => {
@@ -19,7 +20,7 @@ const getMessage = (req, res) => {
 };
 
 const getMessagedUsers = (req, res) => {
-    const phone = "555"
+    const phone = req.user.phone;
     MessageModel.find({ $or: [{ senderNumber: phone }, { receiverNumber: phone }] })
         .exec()
         .then((msgs) => {

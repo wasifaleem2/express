@@ -68,7 +68,7 @@ const verifyUser = async (req, res) => {
                 { $set: {phone: ph, token: token} },  // update operation
                 { upsert: true, new: true },)
             .then(() => {
-                req.user = payload;
+                // req.user = payload;
                 console.log("req.user",req.user);
                 res.status(200).send(token);
             })

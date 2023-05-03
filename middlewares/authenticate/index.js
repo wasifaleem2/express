@@ -28,6 +28,8 @@ function authenticate(req, res, next) {
         // JWT token can be passed in the headers
         //  const token = req.headers['Authorization'];
         req.headers['Authorization'] = `Bearer ${token}`;
+        req.user = user;
+        // req.payload = user;
         // next() is used to pass to the next middleware function or route
         next();
       }
