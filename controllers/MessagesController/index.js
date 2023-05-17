@@ -6,7 +6,8 @@ const MessageModel = require("../../models/MessagesModel");
 
 const getMessage = (req, res) => {
     // console.log("users@@", req.user)
-    const phone = req.user.phone
+    // const phone = req.user.phone
+    const phone = "555"
     // console.log(phone)
     MessageModel.find({ $or: [{ senderNumber: phone }, { receiverNumber: phone }] })
         .exec()

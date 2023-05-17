@@ -3,11 +3,15 @@ const app = express();
 app.use(express.json());
 const mongoose = require("mongoose");
 const databaseConnect = require("./database/index")
+//use cors
+var cors = require('cors');
+app.use(cors());
 
 // call function to connect database
 databaseConnect();
 // api calling from routes
 app.use("/api", require("./routes/index.js"));
+
 
 // port where the server is running 
 const port = 3002
