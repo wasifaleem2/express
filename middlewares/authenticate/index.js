@@ -19,10 +19,12 @@ function authenticate(req, res, next) {
     }
       // Extract the payload of the token contains information/user that can be used
       // ..if required using const phone = req.user.phone in other routes handling
-      let ph = req.body.phone;
-      console.log("user",user);
+      // for get apis use querry instead of body
+      let ph = req.query.phone;
+      console.log("phone",ph);
       const auth = await AuthModel.findOne({phone : ph})
-      if( auth.token == token){
+      console.log("auth.token",auth.token)
+      if(auth.token == token){
         // req.user = user; // saving user to req.user can be excess anywhere      
         // if you have a route handler that needs to make a request to another API endpoint
         // JWT token can be passed in the headers
