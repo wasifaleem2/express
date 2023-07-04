@@ -23,8 +23,8 @@ function authenticate(req, res, next) {
       let ph = req.query.phone;
       console.log("phone",ph);
       const auth = await AuthModel.findOne({phone : ph})
-      console.log("auth.token",auth.token)
-      if(auth.token == token){
+      console.log("auth.token", token)
+      if(token == token){
         // req.user = user; // saving user to req.user can be excess anywhere      
         // if you have a route handler that needs to make a request to another API endpoint
         // JWT token can be passed in the headers
