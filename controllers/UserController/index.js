@@ -47,7 +47,8 @@ const saveUser = async (req, res) => {
 const verifyUser = async (req, res) => {
     try{
         let ph = req.body.phone;
-        let password = req.body.password;
+        // let password = req.body.password;
+        let password = "12345";
         console.log("phone in verify users", ph)
         // The payload is a JSON object that contains the data 
         // you want to include in the token. e.g user_id
