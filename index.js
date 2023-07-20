@@ -73,6 +73,6 @@ app.use("/api", require("./routes/index.js"));
 const port = 3002
 
 // running the server 
-app.listen(port, () => {
+server.listen(port, () => {
   console.log(`Server starts at http://localhost:${port}`)
 })
