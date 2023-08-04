@@ -17,6 +17,22 @@ const fetchUsers = (req, res) => {
         });
 };
 
+const searchUser = (req, res) => {
+    let search = req.query.search; // use querry of params in get request
+    console.log("search for ",search)
+    const regex = new RegExp(search, 'i');
+    UserModel.find({phone: { $regex: regex }})
+        .exec()
+        .then((userData) => {
+            console.log("data", userData);
+            res.status(200).send(userData);
+        })
+        .catch((err) => {
+            console.log(err);
+            res.status(500).send(err);
+        });
+};
+
 const saveUser = async (req, res) => {
     let ph = req.body.phone;
     let name = req.body.name;
@@ -128,4 +144,4 @@ const logout = (req, res) => {
     res.sendStatus(200);
 };
 
-module.exports = {fetchUsers, verifyUser, saveUser, updateUser, deleteUser, deleteAll, logout}
+module.exports = {fetchUsers, searchUser, verifyUser, saveUser, updateUser, deleteUser, deleteAll, logout}
