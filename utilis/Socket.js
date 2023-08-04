@@ -1,6 +1,7 @@
+const UserModel = require("../models/UserModel");
+
 let connectedUsers = [];
 const socketConnect = async (socket) => {
-    // io.on("connection", async (socket) => {
         const userPhone = socket.handshake.query.userPhone;
         console.log("socket id for new conn ", socket.id)
         console.log("userPhone on connection ", userPhone)
@@ -33,7 +34,6 @@ const socketConnect = async (socket) => {
           connectedUsers = connectedUsers.filter((user) => user !== socket.id);
           io.emit("connected_users", { connectedUsers });
         });
-    //   });      
 }
 
 module.exports = socketConnect;
