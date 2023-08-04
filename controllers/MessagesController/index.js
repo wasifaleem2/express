@@ -91,7 +91,9 @@ const sendMessage = async (req, res) => {
     let msg = new MessageModel({ senderNumber: senderNumber, receiverNumber: receiverNumber, text:text, date: date, time: time, messageType:"text" })
     msg.save()
         .then(() => {
+            let recipientDetail = UserModel.find({phone: receiverNumber})
             res.status(200).send("send")
+            global.io.to(recipientDetail.socketId).emit('receive-message', {senderNumber, receiverNumber, text, date, time})
         })
         .catch((error) => {
             res.status(500).send(error);
