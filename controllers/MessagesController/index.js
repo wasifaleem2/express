@@ -21,6 +21,20 @@ const getMessage = (req, res) => {
             res.status(500).send(err);
         });
 };
+const getAllMessages = (req, res) => {
+    // console.log("users@@", req.user)
+    const phone = req.query.phone;
+    // console.log(phone)
+    MessageModel.find({ $or: [{ senderNumber: phone }, { receiverNumber: phone }] })
+        .exec()
+        .then((msgs) => {
+            res.status(200).send(msgs);
+        })
+        .catch((err) => {
+            console.log(err);
+            res.status(500).send(err);
+        });
+};
 
 const getMessagedUsers = (req, res) => {
     const phone = req.user.phone;
@@ -28,16 +42,20 @@ const getMessagedUsers = (req, res) => {
         .exec()
         .then((msgs) => {
             const numbers = [...new Set(msgs.map(m => m.senderNumber === phone ? m.receiverNumber : m.senderNumber))];
-                UserModel.find({ phone: { $in: numbers } })
+            UserModel.find({ phone: { $in: numbers } })
+                .select('name phone socketId')
                 .exec()
-                .then((users)=>{
+                .then((users) => {
+                    for (let i = 0; i < users.length; i++) {
+                        MessageModel.findOne({ $or: [{ senderNumber: phone }, { receiverNumber: phone }] })
+                    }
                     res.status(200).send(users);
                 })
-                .catch((error)=>{
+                .catch((error) => {
                     console.log(error)
                     res.status(500).send(error);
-                })  
-            })
+                })
+        })
         .catch((err) => {
             console.log(err);
             res.status(500).send(err);
@@ -88,12 +106,12 @@ const sendMessage = async (req, res) => {
     let date = new Date().toLocaleDateString();
     let time = new Date().toLocaleTimeString();
 
-    let msg = new MessageModel({ senderNumber: senderNumber, receiverNumber: receiverNumber, text:text, date: date, time: time, messageType:"text" })
+    let msg = new MessageModel({ senderNumber: senderNumber, receiverNumber: receiverNumber, text: text, date: date, time: time, messageType: "text" })
     msg.save()
         .then(() => {
-            let recipientDetail = UserModel.find({phone: receiverNumber})
+            let recipientDetail = UserModel.find({ phone: receiverNumber })
             res.status(200).send("send")
-            global.io.to(recipientDetail.socketId).emit('receive-message', {senderNumber, receiverNumber, text, date, time})
+            global.io.to(recipientDetail.socketId).emit('receive-message', { senderNumber, receiverNumber, text, date, time })
         })
         .catch((error) => {
             res.status(500).send(error);
@@ -133,4 +151,4 @@ const deleteChat = (req, res) => {
         })
 };
 
-module.exports = {getMessage, getMessagedUsers, sendMessage, updateMessage, deleteMessage, deleteChat}
+module.exports = { getMessage, getAllMessages, getMessagedUsers, sendMessage, updateMessage, deleteMessage, deleteChat }
