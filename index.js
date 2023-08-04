@@ -5,6 +5,7 @@ const app = express();
 app.use(express.json());
 const databaseConnect = require("./database/index")
 const socketConnect = require("./utilis/Socket");
+const UserModel = require("./models/UserModel");
 
 //use cors
 var cors = require('cors');
@@ -22,13 +23,13 @@ global.io = socketIO(server, {
   transports: ["polling"],
   //origin * means cross-origin requests from any origin will be allowed.
   cors: {
-    origin: "*", // or http://localhost:3001 or other for specific origin
+    origin: "http://localhost:3002", // or http://localhost:3001 or other for specific origin
   }
 })
 
 
 // array of all connected users
-let connectedUsers = [];
+// let connectedUsers = [];
 
 // socket io connection code with client
 // io.on("connection", async (socket) => {
@@ -66,7 +67,7 @@ let connectedUsers = [];
 //   });
 // });
 
-global.io.on('connection', socketConnect)
+global.io.on('connection', (socket) => socketConnect(socket));
 
 // api calling from routes
 app.use("/api", require("./routes/index.js"));
