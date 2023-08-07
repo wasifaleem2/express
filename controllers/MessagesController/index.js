@@ -4,6 +4,19 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const MessageModel = require("../../models/MessagesModel");
 
+
+const getNoOfMessage = (req, res) => {
+    const phone = req.query.phone
+    MessageModel.countDocuments({ $or: [{ senderNumber: phone }, { receiverNumber: phone }] })
+        .exec()
+        .then((count) => {
+            res.status(200).send(count);
+        })
+        .catch((err) => {
+            console.log(err);
+            res.status(500).send(err);
+        });
+};
 const getMessage = (req, res) => {
     // console.log("users@@", req.user)
     // const phone = req.user.phone
@@ -151,4 +164,4 @@ const deleteChat = (req, res) => {
         })
 };
 
-module.exports = { getMessage, getAllMessages, getMessagedUsers, sendMessage, updateMessage, deleteMessage, deleteChat }
+module.exports = { getNoOfMessage, getMessage, getAllMessages, getMessagedUsers, sendMessage, updateMessage, deleteMessage, deleteChat }
