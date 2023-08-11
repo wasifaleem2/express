@@ -3,19 +3,29 @@ const UserModel = require("../../models/UserModel");
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const MessageModel = require("../../models/MessagesModel");
+const { StatusCodes } = require("http-status-codes")
 
 
-const getNoOfMessage = (req, res) => {
+const getNoOfMessage = async (req, res) => {
     const phone = req.query.phone
-    MessageModel.countDocuments({ $or: [{ senderNumber: phone }, { receiverNumber: phone }] })
-        .exec()
-        .then((count) => {
-            res.status(200).send(count);
-        })
-        .catch((err) => {
-            console.log(err);
-            res.status(500).send(err);
-        });
+    console.log("this is ", phone);
+    await MessageModel.countDocuments({ $or: [{ senderNumber: phone }, { receiverNumber: phone }] })
+    .then((count) => {
+        console.log(`Number of documents in the collection: ${count}`);
+        res.status(200).send(count.toString());
+    })
+    .catch((error) => {
+        res.status(500).send(error);
+    });
+    // console.log("a", a)
+        // .exec()
+        // .then((count) => {
+        //     res.sendStatus(StatusCodes.OK).send(count);
+        // })
+        // .catch((err) => {
+        //     console.log(err);
+        //     res.sendStatus(StatusCodes.INTERNAL_SERVER_ERROR).send(err);
+        // });
 };
 const getMessage = (req, res) => {
     // console.log("users@@", req.user)
@@ -124,7 +134,7 @@ const sendMessage = async (req, res) => {
         .then(() => {
             let recipientDetail = UserModel.find({ phone: receiverNumber })
             res.status(200).send("send")
-            global.io.to(recipientDetail.socketId).emit('receive-message', { senderNumber, receiverNumber, text, date, time })
+            // global.io.to(recipientDetail.socketId).emit('receive-message', { senderNumber, receiverNumber, text, date, time })
         })
         .catch((error) => {
             res.status(500).send(error);
