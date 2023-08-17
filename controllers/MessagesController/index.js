@@ -3,7 +3,22 @@ const UserModel = require("../../models/UserModel");
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const MessageModel = require("../../models/MessagesModel");
+const { StatusCodes } = require("http-status-codes")
+const { connectedSockets } = require("../../utilis/Socket");
 
+
+const getNoOfMessage = async (req, res) => {
+    const phone = req.query.phone
+    console.log("this is ", phone);
+    await MessageModel.countDocuments({ $or: [{ senderNumber: phone }, { receiverNumber: phone }] })
+    .then((count) => {
+        console.log(`Number of documents in the collection: ${count}`);
+        res.status(200).send(count.toString());
+    })
+    .catch((error) => {
+        res.status(500).send(error);
+    });
+};
 const getMessage = (req, res) => {
     // console.log("users@@", req.user)
     // const phone = req.user.phone
@@ -103,15 +118,20 @@ const sendMessage = async (req, res) => {
     let senderNumber = req.body.senderNumber;
     let receiverNumber = req.body.receiverNumber;
     let text = req.body.text;
+    let messageType = req.body.messageType;
     let date = new Date().toLocaleDateString();
     let time = new Date().toLocaleTimeString();
-
-    let msg = new MessageModel({ senderNumber: senderNumber, receiverNumber: receiverNumber, text: text, date: date, time: time, messageType: "text" })
+    // let messageType = "text";
+    console.log("messageType",messageType);
+    let msg = new MessageModel({ senderNumber: senderNumber, receiverNumber: receiverNumber, text: text, date: date, time: time, messageType: messageType })
     msg.save()
-        .then(() => {
-            let recipientDetail = UserModel.find({ phone: receiverNumber })
+        .then(async() => {       
+            senderSocket = connectedSockets[senderNumber];
+            let recipient = await UserModel.findOne({ phone: receiverNumber });
+            let sender = await UserModel.findOne({ phone: senderNumber });
+            console.log("message", msg.text)
+            senderSocket.to(recipient.socketId).emit('receive-message', msg.text);
             res.status(200).send("send")
-            global.io.to(recipientDetail.socketId).emit('receive-message', { senderNumber, receiverNumber, text, date, time })
         })
         .catch((error) => {
             res.status(500).send(error);
@@ -151,4 +171,4 @@ const deleteChat = (req, res) => {
         })
 };
 
-module.exports = { getMessage, getAllMessages, getMessagedUsers, sendMessage, updateMessage, deleteMessage, deleteChat }
+module.exports = { getNoOfMessage, getMessage, getAllMessages, getMessagedUsers, sendMessage, updateMessage, deleteMessage, deleteChat }
