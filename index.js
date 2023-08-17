@@ -4,7 +4,7 @@ const express = require('express')
 const app = express();
 app.use(express.json());
 const databaseConnect = require("./database/index")
-const socketConnect = require("./utilis/Socket");
+const {socketConnect} = require("./utilis/Socket");
 const UserModel = require("./models/UserModel");
 
 //use cors
