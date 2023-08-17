@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const MessageModel = require("../../models/MessagesModel");
 const { StatusCodes } = require("http-status-codes")
+const { connectedSockets } = require("../../utilis/Socket");
 
 
 const getNoOfMessage = async (req, res) => {
@@ -17,15 +18,6 @@ const getNoOfMessage = async (req, res) => {
     .catch((error) => {
         res.status(500).send(error);
     });
-    // console.log("a", a)
-        // .exec()
-        // .then((count) => {
-        //     res.sendStatus(StatusCodes.OK).send(count);
-        // })
-        // .catch((err) => {
-        //     console.log(err);
-        //     res.sendStatus(StatusCodes.INTERNAL_SERVER_ERROR).send(err);
-        // });
 };
 const getMessage = (req, res) => {
     // console.log("users@@", req.user)
@@ -126,25 +118,20 @@ const sendMessage = async (req, res) => {
     let senderNumber = req.body.senderNumber;
     let receiverNumber = req.body.receiverNumber;
     let text = req.body.text;
+    let messageType = req.body.messageType;
     let date = new Date().toLocaleDateString();
     let time = new Date().toLocaleTimeString();
-
-    let msg = new MessageModel({ senderNumber: senderNumber, receiverNumber: receiverNumber, text: text, date: date, time: time, messageType: "text" })
+    // let messageType = "text";
+    console.log("messageType",messageType);
+    let msg = new MessageModel({ senderNumber: senderNumber, receiverNumber: receiverNumber, text: text, date: date, time: time, messageType: messageType })
     msg.save()
-        .then(() => {
-            let recipientDetail = UserModel.findOne({ phone: senderNumber })
-            io.to(recipientDetail.socketId).emit('check', "This is a custom event data");
+        .then(async() => {       
+            senderSocket = connectedSockets[senderNumber];
+            let recipient = await UserModel.findOne({ phone: receiverNumber });
+            let sender = await UserModel.findOne({ phone: senderNumber });
+            console.log("message", msg.text)
+            senderSocket.to(recipient.socketId).emit('receive-message', msg.text);
             res.status(200).send("send")
-            // socket.current.on("receive-message", (msg) => {
-            //     setChat((prevChat) => [...prevChat, msg]);
-            //     setTypingPlaceholder("type")
-            //     if(msg.senderNumber == phoneNo ){
-            //       // do nothing
-            //     }
-            //     else{
-            //       setMessageCount(messageCount + 1)
-            //     }
-            // });
         })
         .catch((error) => {
             res.status(500).send(error);
