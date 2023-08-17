@@ -132,9 +132,19 @@ const sendMessage = async (req, res) => {
     let msg = new MessageModel({ senderNumber: senderNumber, receiverNumber: receiverNumber, text: text, date: date, time: time, messageType: "text" })
     msg.save()
         .then(() => {
-            let recipientDetail = UserModel.find({ phone: receiverNumber })
+            let recipientDetail = UserModel.findOne({ phone: senderNumber })
+            io.to(recipientDetail.socketId).emit('check', "This is a custom event data");
             res.status(200).send("send")
-            // global.io.to(recipientDetail.socketId).emit('receive-message', { senderNumber, receiverNumber, text, date, time })
+            // socket.current.on("receive-message", (msg) => {
+            //     setChat((prevChat) => [...prevChat, msg]);
+            //     setTypingPlaceholder("type")
+            //     if(msg.senderNumber == phoneNo ){
+            //       // do nothing
+            //     }
+            //     else{
+            //       setMessageCount(messageCount + 1)
+            //     }
+            // });
         })
         .catch((error) => {
             res.status(500).send(error);

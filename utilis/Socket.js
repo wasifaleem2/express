@@ -1,4 +1,5 @@
 const UserModel = require("../models/UserModel");
+const MessageModel = require("../models/MessagesModel");
 
 let connectedUsers = [];
 const socketConnect = async (socket) => {
@@ -18,14 +19,18 @@ const socketConnect = async (socket) => {
         console.log("user list",connectedUsers);
         // sending user his socket id
         socket.emit("socket_id", socket.id);
-        // io.emit("connected_users", { connectedUsers });
+        io.emit("connected_users", { connectedUsers });
         socket.on("message", async (data) => {
-          console.log(`message from ${socket.id} to ${data.recipient} : ${data.messageText} @date ${data.date} ${data.time}`);
-          let recipient = await UserModel.findOne({ phone: data.recipient });
-          console.log("recipient", recipient)
-          io.to(data.senderSocket).emit('receive-message', data)
+          let newMessage = new MessageModel({senderNumber: data.senderNumber, receiverNumber: data.receiverNumber, text:data.text, date:data.date,time: data.time, messageType: data.messageType})
+          await newMessage.save();
+          // console.log(`message from ${socket.id} to ${data.recipient} : ${data.messageText} @date ${data.date} ${data.time}`);
+          let recipient = await UserModel.findOne({ phone: data.receiverNumber });
+          let sender = await UserModel.findOne({ phone: data.senderNumber });
+          console.log("message", data.text)
+          io.to(sender.socketId).emit('receive-message', data)
           io.to(recipient.socketId).emit('receive-message', data)
         });
+        
       
         
         // when client disconnects
