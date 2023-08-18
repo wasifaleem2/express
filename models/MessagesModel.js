@@ -23,6 +23,11 @@ const MessageSchema = new mongoose.Schema({
   messageType: {
     type: String,
     required: true,
+    default: "text"
+  },
+  status: {
+    type: String,
+    default: "send"
   },
 });
 const MessageModel = mongoose.model("messages", MessageSchema);
