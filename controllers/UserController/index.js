@@ -87,7 +87,7 @@ const verifyUser = async (req, res) => {
             .then(() => {
                 // req.user = payload;
                 console.log("req.user",req.user);
-                res.status(200).send(token);
+                res.status(200).send({token, phone:ph});
             })
             .catch((error) => {
                 res.status(500).send(error);
