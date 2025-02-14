@@ -15,11 +15,11 @@ const UserSchema = new mongoose.Schema({
   },
   time: {
     type: String,
-    required: true,
+    required: false,
   },
   socketId: {
     type: String,
-    required: true,
+    required: false,
   },
 });
 const UserModel = mongoose.model("users", UserSchema);
