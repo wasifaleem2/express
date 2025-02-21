@@ -66,8 +66,6 @@ const verifyUser = async (req, res) => {
         // let password = req.body.password;
         let password = "12345";
         console.log("phone in verify users", ph)
-        // The payload is a JSON object that contains the data 
-        // you want to include in the token. e.g user_id
         const payload = {
             phone:ph,
             password: password
@@ -75,17 +73,19 @@ const verifyUser = async (req, res) => {
         // The secret key is a string that is used to digitally sign the payload &
         // verify its authenticity.
         const secretKey = `my_secret_key`;
-        const user = await UserModel.findOne({phone : ph})
+        console.log("phone in verify", ph)
+        const user = await UserModel.findOne({phone : "333"})
+        console.log("finded user -> ", user, payload)
         if(user != null && user != undefined)
         {
             const token = jwt.sign(payload, secretKey, { expiresIn: '24h' });
-            console.log(token)
+            console.log("user token to send ->", token)
             AuthModel.findOneAndUpdate(
                 { phone: ph },  // condition to check for existing document
                 { $set: {phone: ph, token: token} },  // update operation
                 { upsert: true, new: true },)
             .then(() => {
-                // req.user = payload;
+                req.user = payload;
                 console.log("req.user",req.user);
                 res.status(200).send({token, phone:ph});
             })
@@ -102,6 +102,7 @@ const verifyUser = async (req, res) => {
         res.status(500).send(error);
     }
 };
+
 const updateUser = (req, res) => {
     let ph = req.params.phone;
     let name = req.body.name;
