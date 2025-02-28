@@ -3,6 +3,7 @@ const UserModel = require("../../models/UserModel");
 const AuthModel = require("../../models/AuthModel");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const UserDto = require("../../dtos/userDto");
 
 const fetchUsers = (req, res) => {
   UserModel.find({})
@@ -71,42 +72,65 @@ const saveUser = async (req, res) => {
 const verifyUser = async (req, res) => {
   try {
     let ph = req.body.phone;
-    // let password = req.body.password;
-    let password = "12345";
-    console.log("phone in verify users", ph);
-    const payload = {
-      phone: ph,
-      password: password,
-    };
-    // The secret key is a string that is used to digitally sign the payload &
-    // verify its authenticity.
-    const secretKey = `my_secret_key`;
-    console.log("phone in verify", ph);
-    const user = await UserModel.findOne({ phone: "333" });
-    console.log("finded user -> ", user, payload);
+    const user = await UserModel.findOne({ phone: ph });
+    console.log("verified user", user)
     if (user != null && user != undefined) {
-      // const token = jwt.sign(payload, secretKey, { expiresIn: '24h' });
-      const token = jwt.sign(payload, secretKey);
-      console.log("user token to send ->", token);
-      AuthModel.findOneAndUpdate(
-        { phone: ph }, // condition to check for existing document
-        { $set: { phone: ph, token: token } }, // update operation
-        { upsert: true, new: true }
-      )
-        .then(() => {
-          req.user = payload;
-          console.log("req.user", req.user);
-          res.status(200).send({ token, phone: ph });
-        })
-        .catch((error) => {
-          res.status(500).send(error);
-        });
-      // res.status(200).send(token);
+      res.status(200).json(new UserDto(200, "Login to Continue...", {phone: ph, userExist: true}));
     } else {
-      res.status(200).send("No User Found");
+      res.status(200).json(new UserDto(404, "No User Found. If Continue new account will be created", {phone: ph, userExist: false}));
     }
   } catch (error) {
-    res.status(500).send(error);
+    res.status(500).json(new UserDto(500, "Server Error", error));
+  }
+};
+
+const login = async (req, res) => {
+  try {
+    const { phone, password, name, forRegister } = req.body;
+    const secretKey = "my_secret_key";
+
+    console.log("phone in verify users", phone);
+
+    if (forRegister && phone && name && password) {
+      const existingUser = await UserModel.findOne({ phone });
+      if (existingUser) {
+        return res.status(400).json(new UserDto(400, "User already exists"));
+      }
+
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(password, salt);
+      const date = new Date().toISOString();
+      
+      const newUser = new UserModel({ phone, name, password: hashedPassword, date, socketId: "" });
+      await newUser.save();
+
+      const token = jwt.sign({ phone }, secretKey);
+      return res.status(200).json(new UserDto(200, "User created", { token, phone }));
+    }
+
+    const user = await UserModel.findOne({ phone });
+    if (!user) {
+      return res.status(404).json(new UserDto(404, "User not found"));
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json(new UserDto(401, "Invalid credentials"));
+    }
+
+    const token = jwt.sign({ phone }, secretKey);
+    console.log("User token to send ->", token);
+
+    await AuthModel.findOneAndUpdate(
+      { phone },
+      { $set: { phone, token } },
+      { upsert: true, new: true }
+    );
+
+    return res.status(200).json(new UserDto(200, "Login successful", { token, phone }));
+  } catch (error) {
+    console.error("Error in login:", error);
+    return res.status(500).json(new UserDto(500, "Server error", error));
   }
 };
 
@@ -156,6 +180,7 @@ module.exports = {
   fetchUsers,
   searchUser,
   verifyUser,
+  login,
   saveUser,
   updateUser,
   deleteUser,
