@@ -22,7 +22,7 @@ const searchUser = (req, res) => {
   let search = req.query.search;
   console.log("search for ", search);
   const regex = new RegExp(search, "i");
-  UserModel.find({ phone: { $regex: regex } })
+  UserModel.find({ $or:  [{phone: { $regex: regex }}, {name: regex}] })
     .exec()
     .then((userData) => {
       console.log("data", userData);
