@@ -107,16 +107,16 @@ const sendMessage = async (req, res) => {
   let receiverNumber = req.body.receiverNumber;
   let text = req.body.text;
   let messageType = req.body.messageType;
-  let date = new Date().toLocaleDateString();
-  let time = new Date().toLocaleTimeString();
+  let dateTime = req.body.dateTime;
+  console.log("message data received", dateTime)
+  // let time = new Date().toLocaleTimeString();
   // let messageType = "text";
   console.log("messageType", messageType);
   let msg = new MessageModel({
     senderNumber: senderNumber,
     receiverNumber: receiverNumber,
     text: text,
-    date: date,
-    time: time,
+    dateTime: dateTime || "",
     messageType: messageType,
   });
   msg
@@ -130,16 +130,14 @@ const sendMessage = async (req, res) => {
         senderNumber,
         receiverNumber,
         text,
-        date,
-        time,
+        dateTime,
         messageType,
       });
       senderSocket.to(recipient.socketId).emit("receive-message", {
         senderNumber,
         receiverNumber,
         text,
-        date,
-        time,
+        dateTime,
         messageType,
       });
       res.status(200).send("send");

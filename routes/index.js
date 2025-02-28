@@ -1,5 +1,5 @@
 const router = require("express").Router();
-const { fetchUsers, verifyUser, saveUser, updateUser, deleteUser, deleteAll, logout, searchUser } = require("../controllers/UserController/index");
+const { fetchUsers, verifyUser, login, saveUser, updateUser, deleteUser, deleteAll, logout, searchUser } = require("../controllers/UserController/index");
 const {getMessage, getMessagedUsers, sendMessage, updateMessage, deleteMessage, deleteChat, getAllMessages, getNoOfMessage} = require("../controllers/MessagesController/index")
 //middlewares
 const authenticate = require("../middlewares/authenticate/index")
@@ -7,6 +7,7 @@ const checkUser = require("../middlewares/checkUser/index")
 
 router.post('/save', saveUser)
 router.post(`/verify`, verifyUser)
+router.post(`/login`, login)
 // router.use(authenticate); // Middleware for authentication
 router.get('/users',authenticate, fetchUsers)
 router.get('/search',authenticate, searchUser)
