@@ -5,6 +5,7 @@ const jwt = require("jsonwebtoken");
 const MessageModel = require("../../models/MessagesModel");
 const { StatusCodes } = require("http-status-codes");
 const { connectedSockets } = require("../../utilis/Socket");
+const MessageDto = require("../../dtos/messageDto");
 
 const getNoOfMessage = async (req, res) => {
   const phone = req.query.phone;
@@ -14,15 +15,15 @@ const getNoOfMessage = async (req, res) => {
   })
     .then((count) => {
       console.log(`Number of documents in the collection: ${count}`);
-      res.status(200).send(count.toString());
+      res.status(200).json(new MessageDto(200, `Number of messages for user phone:  ${phone}`, {counts: count.toString()}));
     })
     .catch((error) => {
-      res.status(500).send(error);
+      res.status(500).json(new MessageDto(500, `Server Error`, error));
+
     });
 };
 
 const getMessage = (req, res) => {
-  // console.log("users@@", req.user)
   // const phone = req.user.phone
   const senderNumber = req.query.senderNumber;
   const receiverNumber = req.query.receiverNumber;
@@ -36,28 +37,26 @@ const getMessage = (req, res) => {
   })
     .exec()
     .then((msgs) => {
-      res.status(200).send(msgs);
+      res.status(200).json(new MessageDto(200, `Messages for user with phone ${senderNumber}`, {messages: msgs}));
     })
     .catch((err) => {
       console.log(err);
-      res.status(500).send(err);
+      res.status(500).json(new MessageDto(500, `Server Error`, err));
     });
 };
 
 const getAllMessages = (req, res) => {
-  // console.log("users@@", req.user)
   const phone = req.query.phone;
-  // console.log(phone)
   MessageModel.find({
     $or: [{ senderNumber: phone }, { receiverNumber: phone }],
   })
     .exec()
     .then((msgs) => {
-      res.status(200).send(msgs);
+      res.status(200).json(new MessageDto(200, `All messages for user with phone ${phone} with all other users.`, {messages: msgs}));
     })
     .catch((err) => {
       console.log(err);
-      res.status(500).send(err);
+      res.status(500).json(new MessageDto(500, `Server Error.`, err));
     });
 };
 
@@ -95,10 +94,12 @@ const getMessagedUsers = async (req, res) => {
       count: messageCount.find((m) => m.phone === user.phone)?.count || 0,
     }));
 
-    res.status(200).send(usersWithMessageCount);
+    // res.status(200).send(usersWithMessageCount);
+    res.status(200).json(new MessageDto(200, `Recipients List for user ${phone}.`, {recipientsList: usersWithMessageCount}));
   } catch (err) {
     console.log(err);
-    res.status(500).send(err);
+    // res.status(500).send(err);
+    res.status(500).json(new MessageDto(500, `Server Error.`, err));
   }
 };
 
@@ -140,7 +141,8 @@ const sendMessage = async (req, res) => {
         dateTime,
         messageType,
       });
-      res.status(200).send("send");
+      // res.status(200).send("send");
+      res.status(200).json(new MessageDto(200, `Message send to ${receiverNumber}`, {senderNumber, receiverNumber, dateTime, messageType, text}));
     })
     .catch((error) => {
       res
@@ -154,10 +156,10 @@ const updateMessage = (req, res) => {
   let text = req.body.text;
   UserModel.findOneAndUpdate({ _id: _id }, { text: text })
     .then(() => {
-      res.status(200).send(`message updated with ${text}`);
+      res.status(200).json(new MessageDto(200, `Message updated with ${text}.`));
     })
     .catch((error) => {
-      res.status(500).send(error);
+      res.status(500).json(new MessageDto(500, `Server Error.`, error));
     });
 };
 
@@ -165,20 +167,20 @@ const deleteMessage = (req, res) => {
   let _id = req.params.id;
   MessageModel.deleteOne({ _id: _id })
     .then(() => {
-      res.status(200).send(`message Deleted `);
+      res.status(200).json(new MessageDto(200, `Message deleted.`));
     })
     .catch((error) => {
-      res.status(500).send(error);
+      res.status(500).json(new MessageDto(500, `Server Error.`, error));
     });
 };
 
 const deleteChat = (req, res) => {
   MessageModel.deleteMany({})
     .then(() => {
-      res.status(200).send(`All user Deleted `);
+      res.status(200).json(new MessageDto(200, `All messages deleted.`));
     })
     .catch((error) => {
-      res.status(500).send(error);
+      res.status(500).json(new MessageDto(500, `server Error.`, error));
     });
 };
 
