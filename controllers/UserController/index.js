@@ -77,7 +77,7 @@ const verifyUser = async (req, res) => {
     if (user != null && user != undefined) {
       res.status(200).json(new UserDto(200, "Login to Continue...", {phone: ph, userExist: true}));
     } else {
-      res.status(200).json(new UserDto(404, "No User Found. If Continue new account will be created", {phone: ph, userExist: false}));
+      res.status(200).json(new UserDto(404, "Creating a new account", {phone: ph, userExist: false}));
     }
   } catch (error) {
     res.status(500).json(new UserDto(500, "Server Error", error));

@@ -2,8 +2,8 @@ const UserModel = require("../../models/UserModel");
 // Authentication middleware
 async function checkUser(req, res, next) {
     try{
-        // let receiverNumber = req.body.receiverNumber;
-        let receiverNumber = "555";
+        let receiverNumber = req.body.receiverNumber;
+        // let receiverNumber = "555";
         const user = await UserModel.findOne({phone : receiverNumber})
         if(user)
         {

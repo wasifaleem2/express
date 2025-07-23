@@ -17,12 +17,12 @@ router.delete(`/deleteAll`,authenticate, deleteAll)
 router.post(`/logout`,authenticate, logout)
 
 //messages routes
-router.get('/message/no-of-messages', authenticate, checkUser, getNoOfMessage)
-router.get('/message/get', authenticate, checkUser, getMessage)
-router.get('/message/getall', authenticate, checkUser, getAllMessages)
-router.get('/message/getusers', authenticate, checkUser, getMessagedUsers)
+router.get('/message/no-of-messages', authenticate, getNoOfMessage)
+router.get('/message/get', authenticate, getMessage)
+router.get('/message/getall', authenticate, getAllMessages)
+router.get('/message/getusers', authenticate, getMessagedUsers)
 router.post('/message/send', authenticate, checkUser, sendMessage)
-router.put(`/message/update/:id`, authenticate, checkUser, updateMessage)
-router.delete(`/message/delete/:id`, authenticate, checkUser, deleteMessage)
+router.put(`/message/update/:id`, authenticate, updateMessage)
+router.delete(`/message/delete/:id`, authenticate, deleteMessage)
 
 module.exports = router;

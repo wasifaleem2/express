@@ -7,6 +7,9 @@ const databaseConnect = require("./database/index")
 const {socketConnect} = require("./utilis/Socket");
 const UserModel = require("./models/UserModel");
 
+// load env 
+require('dotenv').config()
+
 //use cors
 var cors = require('cors');
 app.use(cors());

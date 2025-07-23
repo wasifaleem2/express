@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const databaseConnect = () => {
     try{
         const url =
-        "mongodb://localhost:27017/practice?appname=MongoDB%20Compass&ssl=false";
+        process.env.LOCAL_DB_URL;
         mongoose.set("strictQuery", false);
         mongoose.connect(url, {
             useNewUrlParser: true,
