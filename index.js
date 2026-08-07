@@ -6,9 +6,18 @@ app.use(express.json());
 const databaseConnect = require("./database/index")
 const {socketConnect} = require("./utilis/Socket");
 const UserModel = require("./models/UserModel");
+const { initializeApp, cert } = require("firebase-admin/app");
+
 
 // load env 
 require('dotenv').config()
+
+const serviceAccount = require('./firebase/app-notification-ec741-firebase-adminsdk-fbsvc-95750a5179.json');
+
+initializeApp({
+  credential: cert(serviceAccount),
+});
+
 
 //use cors
 var cors = require('cors');

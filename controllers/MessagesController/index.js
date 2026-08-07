@@ -126,7 +126,7 @@ const sendMessage = async (req, res) => {
       senderSocket = connectedSockets[senderNumber];
       let recipient = await UserModel.findOne({ phone: receiverNumber });
       let sender = await UserModel.findOne({ phone: senderNumber });
-      console.log("message", msg.text);
+      console.log("message()()()()", msg.text);
       senderSocket.emit("receive-message", {
         senderNumber,
         receiverNumber,
