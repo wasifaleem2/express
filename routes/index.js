@@ -1,5 +1,5 @@
 const router = require("express").Router();
-const { fetchUsers, verifyUser, login, saveUser, updateUser, deleteUser, deleteAll, logout, searchUser, pushNotificationTest } = require("../controllers/UserController/index");
+const { fetchUsers, verifyUser, login, saveUser, updateUser, deleteUser, deleteAll, logout, searchUser, pushNotificationTest, registerAppToken } = require("../controllers/UserController/index");
 const {getMessage, getMessagedUsers, sendMessage, updateMessage, deleteMessage, deleteChat, getAllMessages, getNoOfMessage} = require("../controllers/MessagesController/index")
 //middlewares
 const authenticate = require("../middlewares/authenticate/index")
@@ -16,6 +16,7 @@ router.put(`/update/:phone`,authenticate, updateUser)
 router.delete(`/delete/:phone`,authenticate, deleteUser)
 router.delete(`/deleteAll`,authenticate, deleteAll)
 router.post(`/logout`,authenticate, logout)
+router.post(`/app-token`,authenticate, registerAppToken)
 
 //messages routes
 router.get('/message/no-of-messages', authenticate, getNoOfMessage)

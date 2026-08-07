@@ -123,28 +123,40 @@ const sendMessage = async (req, res) => {
   msg
     .save()
     .then(async () => {
-      senderSocket = connectedSockets[senderNumber];
-      let recipient = await UserModel.findOne({ phone: receiverNumber });
-      let sender = await UserModel.findOne({ phone: senderNumber });
-      console.log("message()()()()", msg.text);
-      senderSocket.emit("receive-message", {
+      const payload = {
         senderNumber,
         receiverNumber,
         text,
         dateTime,
         messageType,
-      });
-      senderSocket.to(recipient.socketId).emit("receive-message", {
-        senderNumber,
-        receiverNumber,
-        text,
-        dateTime,
-        messageType,
-      });
-      // res.status(200).send("send");
-      res.status(200).json(new MessageDto(200, `Message send to ${receiverNumber}`, {senderNumber, receiverNumber, dateTime, messageType, text}));
+      };
+
+      // The message is already persisted at this point. Live delivery is
+      // best-effort: a sender who never registered a socket (or a recipient
+      // who is offline) must not turn a successful save into a 500.
+      try {
+        const senderSocket = connectedSockets[senderNumber];
+        const recipient = await UserModel.findOne({ phone: receiverNumber });
+
+        if (senderSocket) {
+          senderSocket.emit("receive-message", payload);
+          if (recipient && recipient.socketId) {
+            senderSocket.to(recipient.socketId).emit("receive-message", payload);
+          }
+        } else if (recipient && recipient.socketId) {
+          // no sender socket to relay through — deliver via the server
+          global.io.to(recipient.socketId).emit("receive-message", payload);
+        } else {
+          console.log(`No live socket for ${senderNumber} -> ${receiverNumber}`);
+        }
+      } catch (socketError) {
+        console.error("Live delivery failed, message still saved:", socketError);
+      }
+
+      res.status(200).json(new MessageDto(200, `Message send to ${receiverNumber}`, payload));
     })
     .catch((error) => {
+      console.error("Error saving message:", error);
       res
         .status(500)
         .send({ error: error, message: "Error sending message.." });

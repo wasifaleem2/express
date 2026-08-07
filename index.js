@@ -12,11 +12,23 @@ const { initializeApp, cert } = require("firebase-admin/app");
 // load env 
 require('dotenv').config()
 
-const serviceAccount = require('./firebase/app-notification-ec741-firebase-adminsdk-fbsvc-95750a5179.json');
+// the /firebase folder is gitignored, so the key is missing on fresh clones.
+// warn instead of crashing the whole chat server over notifications.
+const serviceAccountPath =
+  process.env.FIREBASE_SERVICE_ACCOUNT ||
+  './firebase/app-notification-ec741-firebase-adminsdk-fbsvc-92936dea08.json';
 
-initializeApp({
-  credential: cert(serviceAccount),
-});
+try {
+  const serviceAccount = require(serviceAccountPath);
+  initializeApp({
+    credential: cert(serviceAccount),
+  });
+  console.log('Firebase admin initialized');
+} catch (error) {
+  console.warn(
+    `Firebase admin not initialized (${serviceAccountPath}): ${error.message}. Push notifications are disabled.`
+  );
+}
 
 
 //use cors

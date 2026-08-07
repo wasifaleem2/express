@@ -4,8 +4,8 @@ const AuthModel = require("../../models/AuthModel");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const UserDto = require("../../dtos/userDto");
-const sendNotification = require("../../utilis/sendnotification");
-const { AppTokens, UsersAppTokens } = require("../../models/TokenModel");
+const sendNotification = require("../../utilis/sendNotification");
+const { saveAppToken, removeAppToken } = require("../../utilis/appTokens");
 
 const fetchUsers = (req, res) => {
   UserModel.find({})
@@ -107,6 +107,20 @@ const login = async (req, res) => {
       userDetail = await newUser.save();
 
       const token = jwt.sign({ phone }, secretKey);
+
+      await AuthModel.findOneAndUpdate(
+        { phone },
+        { $set: { phone, token } },
+        { upsert: true, new: true }
+      );
+
+      try {
+        await saveAppToken(userDetail._id, appToken, platform);
+      } catch (error) {
+        // a failed token save must not block the account creation
+        console.error("Error saving app token on register:", error);
+      }
+
       return res.status(200).json(new UserDto(200, "User created", { token, phone }));
     }
 
@@ -130,69 +144,47 @@ const login = async (req, res) => {
       { upsert: true, new: true }
     );
     console.log("userDetail", userDetail?._id)
-    if (appToken && platform) {
-  try {
-    const userID = userDetail._id;
 
-    // Find or create the token in AppTokens collection
-    let tokenDoc = await AppTokens.findOne({ token: appToken });
-
-    if (!tokenDoc) {
-      // Create new token if it doesn't exist
-      tokenDoc = new AppTokens({
-        token: appToken,
-        platform: platform,
-        isActive: true,
-      });
-      await tokenDoc.save();
+    try {
+      await saveAppToken(userDetail._id, appToken, platform);
+    } catch (error) {
+      // a failed token save must not block the login
+      console.error("Error saving app token on login:", error);
     }
-
-    // Check if token is already associated with another user
-    const existingUserToken = await UsersAppTokens.findOne({
-      tokens: tokenDoc._id,
-    });
-
-    if (existingUserToken) {
-      // If token is already associated with a different user, remove it from that user
-      if (existingUserToken.userID.toString() !== userID.toString()) {
-        await UsersAppTokens.updateOne(
-          { _id: existingUserToken._id },
-          { $pull: { tokens: tokenDoc._id } },
-        );
-      } else {
-        // Token already associated with this user, nothing to do
-        console.log("Token already associated with this user");
-        return;
-      }
-    }
-
-    // Associate token with the current user
-    let userTokenDoc = await UsersAppTokens.findOne({ userID: userID });
-
-    if (!userTokenDoc) {
-      // Create new user token document if doesn't exist
-      userTokenDoc = new UsersAppTokens({
-        userID: userID,
-        tokens: [tokenDoc._id],
-      });
-      await userTokenDoc.save();
-    } else {
-      // Add token to existing user's token array if not already present
-      if (!userTokenDoc.tokens.includes(tokenDoc._id)) {
-        userTokenDoc.tokens.push(tokenDoc._id);
-        await userTokenDoc.save();
-      }
-    }
-
-    console.log("Token successfully associated with user");
-  } catch (error) {
-    console.error("Error managing tokens:", error);
-  }
-}
 
     return res.status(200).json(new UserDto(200, "Login successful", { token, phone }));
   } catch (error) {
     console.error("Error in login:", error);
+    return res.status(500).json(new UserDto(500, "Server error", error));
+  }
+};
+
+/**
+ * Saves the device token for an already logged-in user. FCM rotates tokens
+ * (reinstall, app data cleared, restore), so the client calls this from its
+ * onTokenRefresh handler — otherwise notifications silently stop working
+ * until the next login.
+ */
+const registerAppToken = async (req, res) => {
+  try {
+    const { appToken, platform } = req.body;
+
+    if (!appToken || !platform) {
+      return res
+        .status(400)
+        .json(new UserDto(400, "appToken and platform are required"));
+    }
+
+    const user = await UserModel.findOne({ phone: req.user.phone });
+    if (!user) {
+      return res.status(404).json(new UserDto(404, "User not found"));
+    }
+
+    await saveAppToken(user._id, appToken, platform);
+
+    return res.status(200).json(new UserDto(200, "App token saved"));
+  } catch (error) {
+    console.error("Error in registerAppToken:", error);
     return res.status(500).json(new UserDto(500, "Server error", error));
   }
 };
@@ -275,11 +267,20 @@ const deleteAll = (req, res) => {
 };
 
 const revokedTokens = new Set();
-const logout = (req, res) => {
+const logout = async (req, res) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
   // Add the token to the blacklist
   revokedTokens.add(token);
+
+  // release the device so the next user on it does not inherit the
+  // previous user's notifications
+  try {
+    await removeAppToken(req.body?.appToken);
+  } catch (error) {
+    console.error("Error removing app token on logout:", error);
+  }
+
   res.sendStatus(200);
 };
 
@@ -294,4 +295,5 @@ module.exports = {
   deleteAll,
   logout,
   pushNotificationTest,
+  registerAppToken,
 };
