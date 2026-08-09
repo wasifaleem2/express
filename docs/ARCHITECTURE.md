@@ -108,7 +108,9 @@ Module state:
 |---|---|---|
 | server → socket | `socket_id` | the connecting socket's id |
 | server → all | `connected_users` | `{ connectedUsers }` broadcast |
-| server → socket | `receive-message` | a new message (emitted from `sendMessage`) |
+| server → socket | `receive-message` | a new message (emitted from `sendMessage`, includes `_id`) |
+| server → socket | `message-edited` | a message was edited (to both parties) |
+| server → socket | `message-deleted` | a message was deleted for everyone (to both parties) |
 | client → server | `message-read` | mark a sender/receiver thread as read |
 | client → server | `disconnect` | remove from `connectedUsers` |
 

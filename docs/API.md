@@ -119,7 +119,9 @@ Connect with `io(host, { query: { userPhone }, transports: ['polling'] })`.
 |---|---|---|
 | `socket_id` | socket id | on connect |
 | `connected_users` | `{ connectedUsers: string[] }` | on connect / disconnect (broadcast) |
-| `receive-message` | message object | when a message is sent to you (or echoed to sender) |
+| `receive-message` | message object (incl. `_id`) | when a message is sent to you (or echoed to sender) |
+| `message-edited` | `{ _id, text, editedAt, senderNumber, receiverNumber }` | when a message you're in is edited (both parties) |
+| `message-deleted` | `{ _id, deletedForAll, senderNumber, receiverNumber }` | when a message is deleted for everyone (both parties) |
 
 **Client → server**
 | Event | Payload | Effect |

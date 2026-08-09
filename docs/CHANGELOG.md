@@ -2,6 +2,21 @@
 
 Notable changes to the Express backend, newest first.
 
+## 2026-08 — Real-time edit / delete propagation
+
+- **`updateMessage`** now emits a `message-edited` socket event to both the
+  sender and receiver (via a new `emitToUsers` helper over `connectedSockets`),
+  so an edit updates the other party's open chat instantly instead of only on
+  the next fetch.
+- **`deleteMessage` (scope `all`)** emits `message-deleted` to both parties for
+  a live tombstone.
+- **`sendMessage`** now includes the message `_id` in the `receive-message`
+  payload, so messages received live (not just fetched) can be edited/deleted
+  in real time too.
+- *(Verified: a socket client subscribed as the recipient receives
+  `message-edited` with the new text and `message-deleted` with
+  `deletedForAll:true` right after the sender's API calls.)*
+
 ## 2026-08 — Soft delete (delete for me / for everyone)
 
 Replaced the hard delete (`deleteOne`) with a soft-delete model that tracks

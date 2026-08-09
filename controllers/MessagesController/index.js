@@ -9,6 +9,17 @@ const MessageDto = require("../../dtos/messageDto");
 const { getUserTokens } = require("../../utilis/appTokens");
 const sendNotification = require("../../utilis/sendNotification");
 
+// Emit a socket event to each given phone number that has a live socket.
+// Used to push edits/deletes to both parties in real time.
+const emitToUsers = (phones, event, payload) => {
+  phones.forEach((phone) => {
+    const socket = connectedSockets[phone];
+    if (socket) {
+      socket.emit(event, payload);
+    }
+  });
+};
+
 const getNoOfMessage = async (req, res) => {
   const phone = req.query.phone;
   console.log("this is ", phone);
@@ -131,6 +142,7 @@ const sendMessage = async (req, res) => {
     .save()
     .then(async () => {
       const payload = {
+        _id: String(msg._id),
         senderNumber,
         receiverNumber,
         text,
@@ -192,25 +204,35 @@ const sendMessage = async (req, res) => {
     });
 };
 
-const updateMessage = (req, res) => {
+const updateMessage = async (req, res) => {
   let _id = req.params.id;
   let text = req.body.text;
-  // Was UserModel — edits silently did nothing. Update the message document,
-  // stamp editedAt, and return the updated doc so the client can reconcile.
-  MessageModel.findOneAndUpdate(
-    { _id: _id },
-    { text: text, editedAt: new Date() },
-    { new: true }
-  )
-    .then((updated) => {
-      if (!updated) {
-        return res.status(404).json(new MessageDto(404, `Message not found.`));
-      }
-      res.status(200).json(new MessageDto(200, `Message updated.`, { message: updated }));
-    })
-    .catch((error) => {
-      res.status(500).json(new MessageDto(500, `Server Error.`, error));
+  try {
+    // Was UserModel — edits silently did nothing. Update the message document,
+    // stamp editedAt, and return the updated doc so the client can reconcile.
+    const updated = await MessageModel.findOneAndUpdate(
+      { _id: _id },
+      { text: text, editedAt: new Date() },
+      { new: true }
+    );
+    if (!updated) {
+      return res.status(404).json(new MessageDto(404, `Message not found.`));
+    }
+
+    // Real-time: push the edit to both parties so their open chat updates
+    // immediately instead of only on the next fetch.
+    emitToUsers([updated.senderNumber, updated.receiverNumber], "message-edited", {
+      _id: String(updated._id),
+      text: updated.text,
+      editedAt: updated.editedAt,
+      senderNumber: updated.senderNumber,
+      receiverNumber: updated.receiverNumber,
     });
+
+    res.status(200).json(new MessageDto(200, `Message updated.`, { message: updated }));
+  } catch (error) {
+    res.status(500).json(new MessageDto(500, `Server Error.`, error));
+  }
 };
 
 // Soft delete with scope:
@@ -242,6 +264,15 @@ const deleteMessage = async (req, res) => {
         { deletedForAll: true, deletedForAllAt: new Date(), text: "" },
         { new: true }
       );
+
+      // Real-time: turn the message into a tombstone on both devices at once.
+      emitToUsers([updated.senderNumber, updated.receiverNumber], "message-deleted", {
+        _id: String(updated._id),
+        deletedForAll: true,
+        senderNumber: updated.senderNumber,
+        receiverNumber: updated.receiverNumber,
+      });
+
       return res
         .status(200)
         .json(new MessageDto(200, `Message deleted for everyone.`, { message: updated }));
