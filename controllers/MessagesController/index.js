@@ -6,6 +6,8 @@ const MessageModel = require("../../models/MessagesModel");
 const { StatusCodes } = require("http-status-codes");
 const { connectedSockets } = require("../../utilis/Socket");
 const MessageDto = require("../../dtos/messageDto");
+const { getUserTokens } = require("../../utilis/appTokens");
+const sendNotification = require("../../utilis/sendNotification");
 
 const getNoOfMessage = async (req, res) => {
   const phone = req.query.phone;
@@ -27,8 +29,6 @@ const getMessage = (req, res) => {
   // const phone = req.user.phone
   const senderNumber = req.query.senderNumber;
   const receiverNumber = req.query.receiverNumber;
-  const phone = "555";
-  // console.log(phone)
   MessageModel.find({
     $or: [
       { senderNumber: senderNumber, receiverNumber: receiverNumber },
@@ -137,6 +137,7 @@ const sendMessage = async (req, res) => {
       try {
         const senderSocket = connectedSockets[senderNumber];
         const recipient = await UserModel.findOne({ phone: receiverNumber });
+        const recipientOnline = !!connectedSockets[receiverNumber];
 
         if (senderSocket) {
           senderSocket.emit("receive-message", payload);
@@ -148,6 +149,27 @@ const sendMessage = async (req, res) => {
           global.io.to(recipient.socketId).emit("receive-message", payload);
         } else {
           console.log(`No live socket for ${senderNumber} -> ${receiverNumber}`);
+        }
+
+        // If the recipient has no live socket, notify them via FCM push so
+        // offline users still get the message. Best-effort: never fail the save.
+        if (recipient && !recipientOnline) {
+          try {
+            const tokens = await getUserTokens(recipient._id);
+            await Promise.all(
+              tokens.map((t) =>
+                sendNotification({
+                  notification: { title: senderNumber, body: text },
+                  data: { senderNumber: String(senderNumber) },
+                  token: t,
+                }).catch((e) =>
+                  console.error("push to token failed:", e.message)
+                )
+              )
+            );
+          } catch (pushError) {
+            console.error("push lookup failed:", pushError.message);
+          }
         }
       } catch (socketError) {
         console.error("Live delivery failed, message still saved:", socketError);
@@ -166,9 +188,18 @@ const sendMessage = async (req, res) => {
 const updateMessage = (req, res) => {
   let _id = req.params.id;
   let text = req.body.text;
-  UserModel.findOneAndUpdate({ _id: _id }, { text: text })
-    .then(() => {
-      res.status(200).json(new MessageDto(200, `Message updated with ${text}.`));
+  // Was UserModel — edits silently did nothing. Update the message document,
+  // stamp editedAt, and return the updated doc so the client can reconcile.
+  MessageModel.findOneAndUpdate(
+    { _id: _id },
+    { text: text, editedAt: new Date() },
+    { new: true }
+  )
+    .then((updated) => {
+      if (!updated) {
+        return res.status(404).json(new MessageDto(404, `Message not found.`));
+      }
+      res.status(200).json(new MessageDto(200, `Message updated.`, { message: updated }));
     })
     .catch((error) => {
       res.status(500).json(new MessageDto(500, `Server Error.`, error));

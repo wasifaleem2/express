@@ -29,6 +29,11 @@ const MessageSchema = new mongoose.Schema({
     type: String,
     default: "send"
   },
-});
+  // Set when a message is edited; the client shows "edited <date>".
+  editedAt: {
+    type: Date,
+    default: null,
+  },
+}, { timestamps: true });
 const MessageModel = mongoose.model("messages", MessageSchema);
 module.exports = MessageModel;

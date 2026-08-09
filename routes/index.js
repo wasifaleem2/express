@@ -8,13 +8,12 @@ const checkUser = require("../middlewares/checkUser/index")
 router.post('/save', saveUser)
 router.post(`/verify`, verifyUser)
 router.post(`/login`, login)
-router.post(`/notification/:token`, pushNotificationTest)
-// router.use(authenticate); // Middleware for authentication
+// Removed: POST /notification/:token was unauthenticated and could push to any
+// FCM token. Removed: DELETE /deleteAll let any logged-in user wipe every user.
 router.get('/users',authenticate, fetchUsers)
 router.get('/search',authenticate, searchUser)
 router.put(`/update/:phone`,authenticate, updateUser)
 router.delete(`/delete/:phone`,authenticate, deleteUser)
-router.delete(`/deleteAll`,authenticate, deleteAll)
 router.post(`/logout`,authenticate, logout)
 router.post(`/app-token`,authenticate, registerAppToken)
 

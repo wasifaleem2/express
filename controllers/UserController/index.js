@@ -8,31 +8,41 @@ const sendNotification = require("../../utilis/sendNotification");
 const { saveAppToken, removeAppToken } = require("../../utilis/appTokens");
 
 const fetchUsers = (req, res) => {
+  // Never expose the password hash to clients.
   UserModel.find({})
+    .select("-password")
     .exec()
     .then((userData) => {
-      console.log("data", userData);
       res.status(200).send(userData);
     })
     .catch((err) => {
       console.log(err);
-      res.status(500).send(err);
+      res.status(500).json({ message: "Server error" });
     });
 };
 
+// Escape user input before building a RegExp to prevent regex injection / ReDoS.
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const searchUser = (req, res) => {
-  let search = req.query.search;
+  const search = (req.query.search || "").trim();
   console.log("search for ", search);
-  const regex = new RegExp(search, "i");
-  UserModel.find({ $or:  [{phone: { $regex: regex }}, {name: regex}] })
+
+  // Empty query returns nothing rather than every user.
+  if (!search) {
+    return res.status(200).send([]);
+  }
+
+  const regex = new RegExp(escapeRegex(search), "i");
+  UserModel.find({ $or: [{ phone: { $regex: regex } }, { name: regex }] })
+    .select("-password")
     .exec()
     .then((userData) => {
-      console.log("data", userData);
       res.status(200).send(userData);
     })
     .catch((err) => {
       console.log(err);
-      res.status(500).send(err);
+      res.status(500).json({ message: "Server error" });
     });
 };
 
@@ -42,18 +52,20 @@ const saveUser = async (req, res) => {
   let password = req.body.password;
   let time = new Date();
 
-  const salt = await bcrypt.genSalt(10);
-  const hashedPassword = await bcrypt.hash(password, salt);
-
+  // Validate BEFORE hashing (previously the check ran after, and
+  // `password < 5` compared a string to a number so it never fired).
   if (!ph || !password || !name) {
     return res.status(406).json({ err: "need to enter all fields" });
   }
 
-  if (password < 5) {
+  if (password.length < 5) {
     return res
       .status(406)
-      .json({ err: "Password must be atleast 6 characters" });
+      .json({ err: "Password must be at least 5 characters" });
   }
+
+  const salt = await bcrypt.genSalt(10);
+  const hashedPassword = await bcrypt.hash(password, salt);
 
   let user = new UserModel({
     phone: ph,
@@ -89,11 +101,18 @@ const verifyUser = async (req, res) => {
 const login = async (req, res) => {
   try {
     const { phone, password, name, forRegister, appToken, platform } = req.body;
-    const secretKey = "my_secret_key";
+    const secretKey = process.env.JWT_SECRET || "my_secret_key";
+    const expiresIn = process.env.JWT_EXPIRES_IN || "30d";
 
     console.log("phone in verify users", phone);
     let userDetail;
     if (forRegister && phone && name && password) {
+      if (password.length < 5) {
+        return res
+          .status(400)
+          .json(new UserDto(400, "Password must be at least 5 characters"));
+      }
+
       const existingUser = await UserModel.findOne({ phone });
       if (existingUser) {
         return res.status(400).json(new UserDto(400, "User already exists"));
@@ -102,11 +121,11 @@ const login = async (req, res) => {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
       const date = new Date().toISOString();
-      
+
       const newUser = new UserModel({ phone, name, password: hashedPassword, date, socketId: "" });
       userDetail = await newUser.save();
 
-      const token = jwt.sign({ phone }, secretKey);
+      const token = jwt.sign({ phone }, secretKey, { expiresIn });
 
       await AuthModel.findOneAndUpdate(
         { phone },
@@ -135,8 +154,8 @@ const login = async (req, res) => {
       return res.status(401).json(new UserDto(401, "Invalid credentials"));
     }
 
-    const token = jwt.sign({ phone }, secretKey);
-    console.log("User token to send ->", token);
+    const token = jwt.sign({ phone }, secretKey, { expiresIn });
+    console.log("User logged in ->", phone);
 
     await AuthModel.findOneAndUpdate(
       { phone },
@@ -266,19 +285,20 @@ const deleteAll = (req, res) => {
     });
 };
 
-const revokedTokens = new Set();
 const logout = async (req, res) => {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-  // Add the token to the blacklist
-  revokedTokens.add(token);
-
-  // release the device so the next user on it does not inherit the
-  // previous user's notifications
   try {
+    // Real revocation: clear the stored token so the JWT can no longer pass the
+    // authenticate middleware (which compares against AuthModel). The old
+    // in-memory `revokedTokens` Set was never consulted and lost on restart.
+    if (req.user?.phone) {
+      await AuthModel.deleteOne({ phone: req.user.phone });
+    }
+
+    // release the device so the next user on it does not inherit the
+    // previous user's notifications
     await removeAppToken(req.body?.appToken);
   } catch (error) {
-    console.error("Error removing app token on logout:", error);
+    console.error("Error on logout:", error);
   }
 
   res.sendStatus(200);

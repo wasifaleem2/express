@@ -40,9 +40,26 @@ const socketConnect = async (socket) => {
     }
   });
 
-  socket.on("disconnect", () => {
+  socket.on("disconnect", async () => {
     console.log(`socket ${socket.id} disconnected`);
     connectedUsers = connectedUsers.filter((user) => user !== socket.id);
+
+    // Clean up the phone→socket map and the user's stored socketId so the map
+    // doesn't grow unbounded and messages aren't relayed to a dead socket.
+    if (userPhone) {
+      delete connectedSockets[userPhone];
+      try {
+        // Only clear if this socket is still the current one for the user
+        // (a newer connection may have replaced it).
+        await UserModel.findOneAndUpdate(
+          { phone: userPhone, socketId: socket.id },
+          { socketId: "" }
+        );
+      } catch (err) {
+        console.error("disconnect cleanup failed:", err);
+      }
+    }
+
     io.emit("connected_users", { connectedUsers });
   });
 };

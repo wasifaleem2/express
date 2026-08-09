@@ -1,43 +1,39 @@
 const jwt = require('jsonwebtoken');
-const secret = 'my_secret_key';
 const AuthModel = require("../../models/AuthModel");
+
+// Single source of truth for the signing secret (see also UserController login).
+const secret = process.env.JWT_SECRET || 'my_secret_key';
 
 // Authentication middleware
 function authenticate(req, res, next) {
-  // Get the JWT token from the request headers 
+  // Get the JWT token from the request headers
   const authHeader = req.headers['authorization'];
-  // extract the actual token removing bearer
+  // extract the actual token, removing the "Bearer " prefix
   const token = authHeader && authHeader.split(' ')[1];
-  // if no token
   if (!token) {
     return res.sendStatus(401); // Unauthorized
   }
-  // Verify the JWT using secret key and token
+
+  // Verify the signature/expiry first.
   jwt.verify(token, secret, async (err, user) => {
     if (err) {
-      return res.sendStatus(403); // Forbidden
+      return res.sendStatus(403); // Forbidden (bad signature or expired)
     }
-      // Extract the payload of the token contains information/user that can be used
-      // ..if required using const phone = req.user.phone in other routes handling
-      // for get apis use querry instead of body
-      let ph = req.query.phone;
-      console.log("phone",ph);
-      const auth = await AuthModel.findOne({phone : ph})
-      console.log("auth.token", token)
-      if(token == token){
-        // req.user = user; // saving user to req.user can be excess anywhere      
-        // if you have a route handler that needs to make a request to another API endpoint
-        // JWT token can be passed in the headers
-        //  const token = req.headers['Authorization'];
-        req.headers['Authorization'] = `Bearer ${token}`;
-        req.user = user;
-        // req.payload = user;
-        // next() is used to pass to the next middleware function or route
-        next();
-      }
-      else{
+    try {
+      // Enforce server-side revocation: the presented token must match the one
+      // stored for this user at login. logout clears it, so a logged-out (or
+      // superseded) token can no longer authenticate — previously this check
+      // was `if (token == token)`, which was always true and did nothing.
+      const auth = await AuthModel.findOne({ phone: user.phone });
+      if (!auth || auth.token !== token) {
         return res.sendStatus(403);
       }
+      req.user = user;
+      next();
+    } catch (e) {
+      console.error('authenticate error:', e);
+      return res.sendStatus(500);
+    }
   });
 }
 

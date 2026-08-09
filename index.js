@@ -2,7 +2,7 @@ const http = require("http");
 const socketIO = require("socket.io");
 const express = require('express')
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 const databaseConnect = require("./database/index")
 const {socketConnect} = require("./utilis/Socket");
 const UserModel = require("./models/UserModel");
@@ -16,7 +16,7 @@ require('dotenv').config()
 // warn instead of crashing the whole chat server over notifications.
 const serviceAccountPath =
   process.env.FIREBASE_SERVICE_ACCOUNT ||
-  './firebase/app-notification-ec741-firebase-adminsdk-fbsvc-92936dea08.json';
+  './firebase/app-notification-ec741-firebase-adminsdk-fbsvc-b7e9755e5c.json';
 
 try {
   const serviceAccount = require(serviceAccountPath);
@@ -55,8 +55,8 @@ global.io.on('connection', (socket) => socketConnect(socket));
 // api calling from routes
 app.use("/api", require("./routes/index.js"));
 
-// port where the server is running 
-const port = 3002
+// port where the server is running
+const port = process.env.PORT || 3002
 
 // running the server 
 server.listen(port, () => {
