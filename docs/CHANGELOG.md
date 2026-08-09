@@ -2,6 +2,26 @@
 
 Notable changes to the Express backend, newest first.
 
+## 2026-08 — Soft delete (delete for me / for everyone)
+
+Replaced the hard delete (`deleteOne`) with a soft-delete model that tracks
+**who** a message is deleted for:
+
+- **Model fields** (`MessagesModel`): `deletedForAll` (bool), `deletedForAllAt`
+  (Date), `deletedFor` (array of phone numbers).
+- **`DELETE /message/delete/:id`** now takes a `scope` (in the request body):
+  - `"me"` (default): adds the requester's phone to `deletedFor` — hidden for
+    them only, still visible to everyone else.
+  - `"all"`: **sender only** (else `403`); sets `deletedForAll`/`deletedForAllAt`
+    and clears `text`, so both parties see a "This message was deleted"
+    tombstone. Uses `findByIdAndUpdate` so blanking the required `text` doesn't
+    trip schema validation.
+- **`GET /message/get`** filters out messages where `deletedFor` contains the
+  requesting user (`req.user.phone`); tombstones (`deletedForAll`) are still
+  returned so the client can render the placeholder.
+- *(Verified end-to-end: delete-for-me hides only for that user; delete-for-all
+  tombstones for both; a non-sender's delete-for-all is 403.)*
+
 ## 2026-08 — Message edit/delete support
 
 - **`editedAt` on messages.** `MessagesModel` has a new `editedAt` (Date, default `null`).

@@ -100,8 +100,11 @@ Edit a message's text. Stamps `editedAt` and returns the updated document.
 - **Response:** `200` `{ ..., data: { message: <updated doc with editedAt> } }` · `404` if the id doesn't exist.
 
 ### DELETE `/message/delete/:id` — auth
-Delete a message by id.
-- **Response:** `200`
+Soft-delete a message.
+- **Body:** `{ scope: "me" | "all" }` (default `"me"`).
+  - `"me"` — adds the caller to the message's `deletedFor`; hidden for them only.
+  - `"all"` — sender only; sets `deletedForAll` + clears `text` (tombstone for both parties).
+- **Responses:** `200` · `403` if a non-sender requests `scope: "all"` · `404` if not found.
 
 > `deleteChat` (deletes **all** messages via `deleteMany({})`) exists in the controller but is **not routed**.
 

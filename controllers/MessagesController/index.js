@@ -26,13 +26,20 @@ const getNoOfMessage = async (req, res) => {
 };
 
 const getMessage = (req, res) => {
-  // const phone = req.user.phone
   const senderNumber = req.query.senderNumber;
   const receiverNumber = req.query.receiverNumber;
+  const me = req.user?.phone;
   MessageModel.find({
-    $or: [
-      { senderNumber: senderNumber, receiverNumber: receiverNumber },
-      { senderNumber: receiverNumber, receiverNumber: senderNumber },
+    $and: [
+      {
+        $or: [
+          { senderNumber: senderNumber, receiverNumber: receiverNumber },
+          { senderNumber: receiverNumber, receiverNumber: senderNumber },
+        ],
+      },
+      // Hide messages this user personally deleted ("delete for me").
+      // "delete for everyone" rows are kept and returned as tombstones.
+      { deletedFor: { $ne: me } },
     ],
   })
     .exec()
@@ -206,15 +213,51 @@ const updateMessage = (req, res) => {
     });
 };
 
-const deleteMessage = (req, res) => {
-  let _id = req.params.id;
-  MessageModel.deleteOne({ _id: _id })
-    .then(() => {
-      res.status(200).json(new MessageDto(200, `Message deleted.`));
-    })
-    .catch((error) => {
-      res.status(500).json(new MessageDto(500, `Server Error.`, error));
-    });
+// Soft delete with scope:
+//   - scope "all": sender-only; marks deletedForAll and clears text so both
+//     parties render a "This message was deleted" tombstone.
+//   - scope "me" (default): adds the requester's phone to deletedFor, hiding
+//     the message only for them.
+const deleteMessage = async (req, res) => {
+  const _id = req.params.id;
+  const scope = req.body?.scope || req.query?.scope || "me";
+  const phone = req.user?.phone;
+
+  try {
+    const message = await MessageModel.findById(_id);
+    if (!message) {
+      return res.status(404).json(new MessageDto(404, `Message not found.`));
+    }
+
+    if (scope === "all") {
+      if (message.senderNumber !== phone) {
+        return res
+          .status(403)
+          .json(new MessageDto(403, `Only the sender can delete for everyone.`));
+      }
+      // findByIdAndUpdate (not save) so clearing the required `text` field to
+      // "" doesn't trip schema validation. The tombstone is all that remains.
+      const updated = await MessageModel.findByIdAndUpdate(
+        _id,
+        { deletedForAll: true, deletedForAllAt: new Date(), text: "" },
+        { new: true }
+      );
+      return res
+        .status(200)
+        .json(new MessageDto(200, `Message deleted for everyone.`, { message: updated }));
+    }
+
+    // personal "delete for me"
+    await MessageModel.updateOne(
+      { _id },
+      { $addToSet: { deletedFor: phone } }
+    );
+    return res
+      .status(200)
+      .json(new MessageDto(200, `Message deleted for you.`, { id: _id, scope: "me" }));
+  } catch (error) {
+    return res.status(500).json(new MessageDto(500, `Server Error.`, error));
+  }
 };
 
 const deleteChat = (req, res) => {

@@ -74,7 +74,7 @@ Relationships are **weak**: messages and users are linked only by matching phone
 `phone` (unique) + `token` (latest JWT). Currently written on login but **never verified against** on requests (see IMPROVEMENTS).
 
 ### `MessagesModel` → `messages`
-`senderNumber`, `receiverNumber`, `text`, `dateTime` (all required strings), `messageType` (default `"text"`), `status` (default `"send"` → `"read"`), `editedAt` (Date, set when a message is edited), plus `createdAt`/`updatedAt` (`timestamps: true`). No user refs (linked by phone string).
+`senderNumber`, `receiverNumber`, `text`, `dateTime` (all required strings), `messageType` (default `"text"`), `status` (default `"send"` → `"read"`), `editedAt` (Date, set when a message is edited), and soft-delete tracking — `deletedForAll` (bool) + `deletedForAllAt` (Date) for "delete for everyone", `deletedFor` (array of phone numbers) for per-user "delete for me" — plus `createdAt`/`updatedAt` (`timestamps: true`). No user refs (linked by phone string).
 
 ### `TokenModel` → `apptokens` + `userAppTokens`
 - `apptokens`: `token` (unique), `platform`, `isActive`, timestamps.
