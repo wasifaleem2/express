@@ -25,16 +25,64 @@ const socketConnect = async (socket) => {
   // sending user his socket id
   socket.emit("socket_id", socket.id);
   io.emit("connected_users", { connectedUsers });
+  // Receipt convention:
+  //   data.senderNumber   = author of the messages being acknowledged (S)
+  //   data.receiverNumber = the party acknowledging (R)
+  // We add R to the messages' deliveredTo / readBy sets, then push a
+  // `receipt-update` back to S's live socket so the sender's bubbles upgrade
+  // in real time. Using $addToSet keeps this idempotent and group-ready.
+
+  // R's device received S's messages (delivered, not necessarily read).
+  socket.on("message-delivered", async (data) => {
+    try {
+      await MessageModel.updateMany(
+        {
+          senderNumber: data.senderNumber,
+          receiverNumber: data.receiverNumber,
+          readBy: { $ne: data.receiverNumber },
+        },
+        {
+          $addToSet: { deliveredTo: data.receiverNumber },
+          $set: { status: "delivered" },
+        }
+      );
+      const authorSocket = connectedSockets[data.senderNumber];
+      if (authorSocket) {
+        authorSocket.emit("receipt-update", {
+          senderNumber: data.senderNumber,
+          receiverNumber: data.receiverNumber,
+          type: "delivered",
+        });
+      }
+    } catch (error) {
+      console.error("Error marking delivered:", error);
+    }
+  });
+
+  // R opened the chat and read S's messages.
   socket.on("message-read", async (data) => {
     try {
-      const result = await MessageModel.updateMany(
+      await MessageModel.updateMany(
         {
           senderNumber: data.senderNumber,
           receiverNumber: data.receiverNumber,
         },
-        { status: "read" }
+        {
+          $addToSet: {
+            deliveredTo: data.receiverNumber,
+            readBy: data.receiverNumber,
+          },
+          $set: { status: "read" },
+        }
       );
-      console.log("Update successful:", result);
+      const authorSocket = connectedSockets[data.senderNumber];
+      if (authorSocket) {
+        authorSocket.emit("receipt-update", {
+          senderNumber: data.senderNumber,
+          receiverNumber: data.receiverNumber,
+          type: "read",
+        });
+      }
     } catch (error) {
       console.error("Error updating messages:", error);
     }

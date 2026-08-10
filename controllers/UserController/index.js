@@ -140,7 +140,7 @@ const login = async (req, res) => {
         console.error("Error saving app token on register:", error);
       }
 
-      return res.status(200).json(new UserDto(200, "User created", { token, phone }));
+      return res.status(200).json(new UserDto(200, "User created", { token, phone, name }));
     }
 
     const user = await UserModel.findOne({ phone });
@@ -171,7 +171,7 @@ const login = async (req, res) => {
       console.error("Error saving app token on login:", error);
     }
 
-    return res.status(200).json(new UserDto(200, "Login successful", { token, phone }));
+    return res.status(200).json(new UserDto(200, "Login successful", { token, phone, name: user.name }));
   } catch (error) {
     console.error("Error in login:", error);
     return res.status(500).json(new UserDto(500, "Server error", error));
@@ -205,6 +205,49 @@ const registerAppToken = async (req, res) => {
   } catch (error) {
     console.error("Error in registerAppToken:", error);
     return res.status(500).json(new UserDto(500, "Server error", error));
+  }
+};
+
+// ---- End-to-end encryption key exchange ----
+
+// Store the caller's public key so peers can encrypt messages to them.
+const registerPublicKey = async (req, res) => {
+  try {
+    const { publicKey } = req.body;
+    if (!publicKey) {
+      return res.status(400).json(new UserDto(400, "publicKey is required"));
+    }
+    const updated = await UserModel.findOneAndUpdate(
+      { phone: req.user.phone },
+      { publicKey },
+      { new: true }
+    );
+    if (!updated) {
+      return res.status(404).json(new UserDto(404, "User not found"));
+    }
+    return res.status(200).json(new UserDto(200, "Public key registered"));
+  } catch (error) {
+    console.error("Error in registerPublicKey:", error);
+    return res.status(500).json(new UserDto(500, "Server error"));
+  }
+};
+
+// Return a peer's public key so the caller can encrypt to them.
+const getPublicKey = async (req, res) => {
+  try {
+    const phone = req.params.phone;
+    const user = await UserModel.findOne({ phone }).select("phone publicKey");
+    if (!user || !user.publicKey) {
+      return res
+        .status(404)
+        .json(new UserDto(404, "Public key not found for user"));
+    }
+    return res
+      .status(200)
+      .json(new UserDto(200, "Public key", { phone: user.phone, publicKey: user.publicKey }));
+  } catch (error) {
+    console.error("Error in getPublicKey:", error);
+    return res.status(500).json(new UserDto(500, "Server error"));
   }
 };
 
@@ -252,16 +295,34 @@ const pushNotificationTest = async (req, res) => {
     }
 };
 
-const updateUser = (req, res) => {
-  let ph = req.params.phone;
-  let name = req.body.name;
-  UserModel.findOneAndUpdate({ phone: ph }, { name: name })
-    .then(() => {
-      res.status(200).send(`User updatedwith phone ${ph}`);
-    })
-    .catch((error) => {
-      res.status(500).send(error);
-    });
+const updateUser = async (req, res) => {
+  try {
+    // Always act on the authenticated user's own record — ignore the :phone
+    // param as a target so a logged-in user can't rename someone else.
+    const ph = req.user?.phone;
+    const name = (req.body.name || "").trim();
+
+    if (!name) {
+      return res.status(400).json(new UserDto(400, "Name cannot be empty"));
+    }
+
+    const updated = await UserModel.findOneAndUpdate(
+      { phone: ph },
+      { name },
+      { new: true }
+    ).select("-password");
+
+    if (!updated) {
+      return res.status(404).json(new UserDto(404, "User not found"));
+    }
+
+    return res
+      .status(200)
+      .json(new UserDto(200, "Name updated", { phone: ph, name: updated.name }));
+  } catch (error) {
+    console.error("Error in updateUser:", error);
+    return res.status(500).json(new UserDto(500, "Server error"));
+  }
 };
 
 const deleteUser = (req, res) => {
@@ -316,4 +377,6 @@ module.exports = {
   logout,
   pushNotificationTest,
   registerAppToken,
+  registerPublicKey,
+  getPublicKey,
 };

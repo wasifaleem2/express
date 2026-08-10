@@ -127,16 +127,25 @@ const sendMessage = async (req, res) => {
   let text = req.body.text;
   let messageType = req.body.messageType;
   let dateTime = req.body.dateTime;
-  console.log("message data received", dateTime)
-  // let time = new Date().toLocaleTimeString();
-  // let messageType = "text";
-  console.log("messageType", messageType);
+  // E2EE fields (present when the client encrypted the message). The server
+  // stores these opaquely and can never read the plaintext.
+  let encVersion = req.body.encVersion || 0;
+  let ciphertext = req.body.ciphertext || "";
+  let nonce = req.body.nonce || "";
+  let senderPub = req.body.senderPub || "";
+  let envelopes = Array.isArray(req.body.envelopes) ? req.body.envelopes : [];
+  console.log("message data received", dateTime, "encrypted:", !!encVersion)
   let msg = new MessageModel({
     senderNumber: senderNumber,
     receiverNumber: receiverNumber,
-    text: text,
+    text: encVersion ? "" : text, // never persist plaintext for encrypted msgs
     dateTime: dateTime || "",
     messageType: messageType,
+    encVersion,
+    ciphertext,
+    nonce,
+    senderPub,
+    envelopes,
   });
   msg
     .save()
@@ -145,9 +154,16 @@ const sendMessage = async (req, res) => {
         _id: String(msg._id),
         senderNumber,
         receiverNumber,
-        text,
+        text: encVersion ? "" : text,
         dateTime,
         messageType,
+        encVersion,
+        ciphertext,
+        nonce,
+        senderPub,
+        envelopes,
+        deliveredTo: [],
+        readBy: [],
       };
 
       // The message is already persisted at this point. Live delivery is
@@ -175,10 +191,13 @@ const sendMessage = async (req, res) => {
         if (recipient && !recipientOnline) {
           try {
             const tokens = await getUserTokens(recipient._id);
+            // With E2EE the server cannot read the message, so the push body is
+            // generic. (Even for legacy plaintext we keep it private-by-default.)
+            const notifBody = encVersion ? "🔒 New message" : "New message";
             await Promise.all(
               tokens.map((t) =>
                 sendNotification({
-                  notification: { title: senderNumber, body: text },
+                  notification: { title: senderNumber, body: notifBody },
                   data: { senderNumber: String(senderNumber) },
                   token: t,
                 }).catch((e) =>
@@ -207,12 +226,26 @@ const sendMessage = async (req, res) => {
 const updateMessage = async (req, res) => {
   let _id = req.params.id;
   let text = req.body.text;
+  // Re-encrypted payload for an edited message (client encrypts the new text).
+  let encVersion = req.body.encVersion || 0;
   try {
-    // Was UserModel — edits silently did nothing. Update the message document,
-    // stamp editedAt, and return the updated doc so the client can reconcile.
+    // Build the update: for encrypted edits swap the cipher fields and blank
+    // the plaintext; for legacy edits just set text.
+    const update = encVersion
+      ? {
+          encVersion,
+          ciphertext: req.body.ciphertext || "",
+          nonce: req.body.nonce || "",
+          senderPub: req.body.senderPub || "",
+          envelopes: Array.isArray(req.body.envelopes) ? req.body.envelopes : [],
+          text: "",
+          editedAt: new Date(),
+        }
+      : { text: text, editedAt: new Date() };
+
     const updated = await MessageModel.findOneAndUpdate(
       { _id: _id },
-      { text: text, editedAt: new Date() },
+      update,
       { new: true }
     );
     if (!updated) {
@@ -220,10 +253,16 @@ const updateMessage = async (req, res) => {
     }
 
     // Real-time: push the edit to both parties so their open chat updates
-    // immediately instead of only on the next fetch.
+    // immediately. For encrypted edits we relay the cipher fields so the
+    // recipient can decrypt the new text client-side.
     emitToUsers([updated.senderNumber, updated.receiverNumber], "message-edited", {
       _id: String(updated._id),
       text: updated.text,
+      encVersion: updated.encVersion,
+      ciphertext: updated.ciphertext,
+      nonce: updated.nonce,
+      senderPub: updated.senderPub,
+      envelopes: updated.envelopes,
       editedAt: updated.editedAt,
       senderNumber: updated.senderNumber,
       receiverNumber: updated.receiverNumber,

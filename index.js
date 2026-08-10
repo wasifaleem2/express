@@ -16,7 +16,7 @@ require('dotenv').config()
 // warn instead of crashing the whole chat server over notifications.
 const serviceAccountPath =
   process.env.FIREBASE_SERVICE_ACCOUNT ||
-  './firebase/app-notification-ec741-firebase-adminsdk-fbsvc-b7e9755e5c.json';
+  './firebase/app-notification-ec741-firebase-adminsdk-fbsvc-92936dea08.json';
 
 try {
   const serviceAccount = require(serviceAccountPath);

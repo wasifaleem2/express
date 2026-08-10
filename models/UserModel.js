@@ -21,6 +21,12 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: false,
   },
+  // Base64 Curve25519 public key for end-to-end encryption. Published by the
+  // user's device; safe to store server-side (public keys are not secret).
+  publicKey: {
+    type: String,
+    default: "",
+  },
 });
 const UserModel = mongoose.model("users", UserSchema);
 module.exports = UserModel;
