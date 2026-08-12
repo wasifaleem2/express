@@ -14,19 +14,25 @@ require('dotenv').config()
 
 // the /firebase folder is gitignored, so the key is missing on fresh clones.
 // warn instead of crashing the whole chat server over notifications.
+//
+// In containers/cloud there is no key file, so prefer the full JSON supplied
+// via FIREBASE_SERVICE_ACCOUNT_JSON (set it as a secret/env var). Fall back to
+// a file path for local dev.
 const serviceAccountPath =
   process.env.FIREBASE_SERVICE_ACCOUNT ||
   './firebase/app-notification-ec741-firebase-adminsdk-fbsvc-92936dea08.json';
 
 try {
-  const serviceAccount = require(serviceAccountPath);
+  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)
+    : require(serviceAccountPath);
   initializeApp({
     credential: cert(serviceAccount),
   });
   console.log('Firebase admin initialized');
 } catch (error) {
   console.warn(
-    `Firebase admin not initialized (${serviceAccountPath}): ${error.message}. Push notifications are disabled.`
+    `Firebase admin not initialized: ${error.message}. Push notifications are disabled.`
   );
 }
 
