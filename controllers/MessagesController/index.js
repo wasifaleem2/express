@@ -126,7 +126,11 @@ const sendMessage = async (req, res) => {
   let receiverNumber = req.body.receiverNumber;
   let text = req.body.text;
   let messageType = req.body.messageType;
-  let dateTime = req.body.dateTime;
+  // The SERVER stamps the canonical timestamp in UTC (ISO 8601). We never trust
+  // the client clock — this keeps ordering and times correct across devices in
+  // different timezones. Clients convert this UTC value to local time only for
+  // display (toLocaleTimeString).
+  let dateTime = new Date().toISOString();
   // E2EE fields (present when the client encrypted the message). The server
   // stores these opaquely and can never read the plaintext.
   let encVersion = req.body.encVersion || 0;
@@ -134,6 +138,7 @@ const sendMessage = async (req, res) => {
   let nonce = req.body.nonce || "";
   let senderPub = req.body.senderPub || "";
   let envelopes = Array.isArray(req.body.envelopes) ? req.body.envelopes : [];
+  let replyTo = req.body.replyTo || null;
   console.log("message data received", dateTime, "encrypted:", !!encVersion)
   let msg = new MessageModel({
     senderNumber: senderNumber,
@@ -146,6 +151,7 @@ const sendMessage = async (req, res) => {
     nonce,
     senderPub,
     envelopes,
+    replyTo,
   });
   msg
     .save()
@@ -162,6 +168,7 @@ const sendMessage = async (req, res) => {
         nonce,
         senderPub,
         envelopes,
+        replyTo,
         deliveredTo: [],
         readBy: [],
       };
