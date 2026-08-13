@@ -330,14 +330,32 @@ const deleteMessage = async (req, res) => {
   }
 };
 
-const deleteChat = (req, res) => {
-  MessageModel.deleteMany({})
-    .then(() => {
-      res.status(200).json(new MessageDto(200, `All messages deleted.`));
-    })
-    .catch((error) => {
-      res.status(500).json(new MessageDto(500, `server Error.`, error));
+// Delete the ENTIRE conversation between the logged-in user and :recipient.
+// (Previously this was deleteMany({}) — it wiped every message in the DB.)
+const deleteChat = async (req, res) => {
+  try {
+    const me = req.user?.phone;
+    const recipient = req.params.recipient;
+    if (!recipient) {
+      return res.status(400).json(new MessageDto(400, `Recipient is required.`));
+    }
+
+    const result = await MessageModel.deleteMany({
+      $or: [
+        { senderNumber: me, receiverNumber: recipient },
+        { senderNumber: recipient, receiverNumber: me },
+      ],
     });
+
+    // Let the other party's open chat update in real time if they're online.
+    emitToUsers([me, recipient], "chat-deleted", { by: me, with: recipient });
+
+    return res
+      .status(200)
+      .json(new MessageDto(200, `Chat deleted.`, { deletedCount: result.deletedCount }));
+  } catch (error) {
+    return res.status(500).json(new MessageDto(500, `Server Error.`, error));
+  }
 };
 
 module.exports = {
