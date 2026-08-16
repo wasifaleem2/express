@@ -59,6 +59,13 @@ const MessageSchema = new mongoose.Schema({
     required: true,
     default: "text"
   },
+  // _id of the message this one is replying to (null for normal messages). The
+  // quoted preview is resolved client-side from the already-decrypted messages,
+  // so no plaintext of the quoted message is stored here (keeps E2EE intact).
+  replyTo: {
+    type: String,
+    default: null,
+  },
   // Legacy single-state field, kept for backward compatibility. The real
   // per-recipient tracking lives in deliveredTo / readBy below, which the
   // client derives a display status from. This generalises to group chats:

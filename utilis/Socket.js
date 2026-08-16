@@ -59,6 +59,15 @@ const socketConnect = async (socket) => {
     }
   });
 
+  // Typing indicator: relay to the recipient only (no DB write). data =
+  // { senderNumber: me, receiverNumber: peer, isTyping }.
+  socket.on("typing", (data) => {
+    const recipientSocket = connectedSockets[data.receiverNumber];
+    if (recipientSocket) {
+      recipientSocket.emit("typing", data);
+    }
+  });
+
   // R opened the chat and read S's messages.
   socket.on("message-read", async (data) => {
     try {

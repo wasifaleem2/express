@@ -1,8 +1,13 @@
 node_modules
-.env
-.env.*
+npm-debug.log
 .git
 .gitignore
+# Never bake secrets into the image — provide them at runtime via env vars
+# (DATABASE_URL, JWT_SECRET) and FIREBASE_SERVICE_ACCOUNT_JSON for the key.
+.env
+.env.*
+firebase/
 docs
-*.md
-mongoose.txt
+Dockerfile
+.dockerignore
+docker-compose.yml

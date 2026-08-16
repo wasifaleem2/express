@@ -251,6 +251,48 @@ const getPublicKey = async (req, res) => {
   }
 };
 
+// Change the logged-in user's password. Requires the current password to
+// match before setting the new (hashed) one.
+const changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res
+        .status(400)
+        .json(new UserDto(400, "Current and new password are required"));
+    }
+    if (newPassword.length < 5) {
+      return res
+        .status(400)
+        .json(new UserDto(400, "New password must be at least 5 characters"));
+    }
+
+    const user = await UserModel.findOne({ phone: req.user.phone });
+    if (!user) {
+      return res.status(404).json(new UserDto(404, "User not found"));
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      // 400 (not 401): a wrong *current password* is bad input, not an expired
+      // session. Returning 401 here trips the client's auth interceptor, which
+      // wipes the stored token and breaks every later request until re-login.
+      return res
+        .status(400)
+        .json(new UserDto(400, "Current password is incorrect"));
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+    await user.save();
+
+    return res.status(200).json(new UserDto(200, "Password updated"));
+  } catch (error) {
+    console.error("Error in changePassword:", error);
+    return res.status(500).json(new UserDto(500, "Server error"));
+  }
+};
+
 const pushNotificationTest = async (req, res) => {
     try {
         const notificationToken = req.params.token;
@@ -379,4 +421,5 @@ module.exports = {
   registerAppToken,
   registerPublicKey,
   getPublicKey,
+  changePassword,
 };

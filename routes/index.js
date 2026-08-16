@@ -26,6 +26,7 @@ router.put(`/update/:phone`,authenticate, updateUser)
 router.delete(`/delete/:phone`,authenticate, deleteUser)
 router.post(`/logout`,authenticate, logout)
 router.post(`/app-token`,authenticate, registerAppToken)
+router.post(`/change-password`,authenticate, changePassword)
 
 // E2EE key exchange
 router.post(`/keys`, authenticate, registerPublicKey)
@@ -39,5 +40,6 @@ router.get('/message/getusers', authenticate, getMessagedUsers)
 router.post('/message/send', authenticate, checkUser, sendMessage)
 router.put(`/message/update/:id`, authenticate, updateMessage)
 router.delete(`/message/delete/:id`, authenticate, deleteMessage)
+router.delete(`/message/chat/:recipient`, authenticate, deleteChat)
 
 module.exports = router;
