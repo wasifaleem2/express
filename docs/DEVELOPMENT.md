@@ -15,7 +15,10 @@
 | `PORT` | no | `3002` |
 | `JWT_SECRET` | recommended | dev fallback `my_secret_key` — **set a long random value in production** |
 | `JWT_EXPIRES_IN` | no | `30d` |
-| `FIREBASE_SERVICE_ACCOUNT` | no | falls back to `./firebase/app-notification-…-adminsdk-….json` |
+| `MESSAGE_ENC_KEY` | recommended | key for at-rest message encryption (used as key id `v1`) — **set `openssl rand -base64 32` in production** (dev falls back to an insecure default) |
+| `MESSAGE_ENC_KEYS` | no | keyring for rotation: JSON `{"v1":"<old>","k2":"<new>"}`. Overrides `MESSAGE_ENC_KEY` when set. |
+| `MESSAGE_ENC_KEY_CURRENT` | no | which keyring id encrypts new messages, e.g. `k2` |
+| `FIREBASE_SERVICE_ACCOUNT` | no | **either** the whole service-account JSON (starts with `{` — preferred for cloud, set as a secret) **or** a path to the JSON file. Falls back to the bundled `./firebase/…adminsdk….json`. |
 
 The Firebase key lives in the gitignored `firebase/` folder. `index.js` wraps its load in try/catch, so a missing key only logs a warning:
 

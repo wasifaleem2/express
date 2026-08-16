@@ -8,6 +8,7 @@ const { connectedSockets } = require("../../utilis/Socket");
 const MessageDto = require("../../dtos/messageDto");
 const { getUserTokens } = require("../../utilis/appTokens");
 const sendNotification = require("../../utilis/sendNotification");
+const { encryptText, decryptText } = require("../../utilis/encryption");
 
 // Emit a socket event to each given phone number that has a live socket.
 // Used to push edits/deletes to both parties in real time.
@@ -21,8 +22,8 @@ const emitToUsers = (phones, event, payload) => {
 };
 
 const getNoOfMessage = async (req, res) => {
-  const phone = req.query.phone;
-  console.log("this is ", phone);
+  // Identity comes from the JWT, never a client-supplied query param (IDOR).
+  const phone = req.user.phone;
   await MessageModel.countDocuments({
     $or: [{ senderNumber: phone }, { receiverNumber: phone }],
   })
@@ -40,6 +41,13 @@ const getMessage = (req, res) => {
   const senderNumber = req.query.senderNumber;
   const receiverNumber = req.query.receiverNumber;
   const me = req.user?.phone;
+
+  // Authorization: the caller must be one of the two participants. Prevents
+  // reading someone else's thread by passing arbitrary numbers (IDOR).
+  if (me !== senderNumber && me !== receiverNumber) {
+    return res.status(403).json(new MessageDto(403, "Not your conversation."));
+  }
+
   MessageModel.find({
     $and: [
       {
@@ -55,7 +63,13 @@ const getMessage = (req, res) => {
   })
     .exec()
     .then((msgs) => {
-      res.status(200).json(new MessageDto(200, `Messages for user with phone ${senderNumber}`, {messages: msgs}));
+      // Decrypt at-rest plaintext for transport (no-op for E2EE/empty text).
+      const out = msgs.map((m) => {
+        const o = m.toObject();
+        o.text = decryptText(o.text);
+        return o;
+      });
+      res.status(200).json(new MessageDto(200, `Messages for user with phone ${senderNumber}`, {messages: out}));
     })
     .catch((err) => {
       console.log(err);
@@ -64,13 +78,22 @@ const getMessage = (req, res) => {
 };
 
 const getAllMessages = (req, res) => {
-  const phone = req.query.phone;
+  // Identity from the JWT, not a query param (IDOR).
+  const phone = req.user.phone;
   MessageModel.find({
-    $or: [{ senderNumber: phone }, { receiverNumber: phone }],
+    $and: [
+      { $or: [{ senderNumber: phone }, { receiverNumber: phone }] },
+      { deletedFor: { $ne: phone } },
+    ],
   })
     .exec()
     .then((msgs) => {
-      res.status(200).json(new MessageDto(200, `All messages for user with phone ${phone} with all other users.`, {messages: msgs}));
+      const out = msgs.map((m) => {
+        const o = m.toObject();
+        o.text = decryptText(o.text);
+        return o;
+      });
+      res.status(200).json(new MessageDto(200, `All messages for user with phone ${phone} with all other users.`, {messages: out}));
     })
     .catch((err) => {
       console.log(err);
@@ -138,7 +161,9 @@ const sendMessage = async (req, res) => {
   let msg = new MessageModel({
     senderNumber: senderNumber,
     receiverNumber: receiverNumber,
-    text: encVersion ? "" : text, // never persist plaintext for encrypted msgs
+    // E2EE msgs store ciphertext (text ""). Plaintext msgs are encrypted at
+    // rest with AES-256-GCM so a DB/backup leak doesn't expose message content.
+    text: encVersion ? "" : encryptText(text),
     dateTime: dateTime || "",
     messageType: messageType,
     encVersion,
@@ -188,25 +213,45 @@ const sendMessage = async (req, res) => {
 
         // If the recipient has no live socket, notify them via FCM push so
         // offline users still get the message. Best-effort: never fail the save.
-        if (recipient && !recipientOnline) {
+        if (!recipient) {
+          console.log(`[push] recipient ${receiverNumber} not found — no push`);
+        } else if (recipientOnline) {
+          console.log(`[push] ${receiverNumber} is ONLINE (live socket) — push skipped by design`);
+        } else {
           try {
             const tokens = await getUserTokens(recipient._id);
-            // With E2EE the server cannot read the message, so the push body is
-            // generic. (Even for legacy plaintext we keep it private-by-default.)
-            const notifBody = encVersion ? "🔒 New message" : "New message";
-            await Promise.all(
+            console.log(`[push] ${receiverNumber} offline, ${tokens.length} registered token(s)`);
+            if (tokens.length === 0) {
+              console.log(`[push] no FCM tokens for ${receiverNumber} — their device never registered one (or it was moved to another account on the same device)`);
+            }
+            // Title = sender's display name (fall back to phone); body = the
+            // message text for plaintext messages (generic for legacy E2EE).
+            const sender = await UserModel.findOne({ phone: senderNumber }).select("name");
+            const senderName = sender?.name || senderNumber;
+            const notifBody = encVersion ? "🔒 New message" : (text || "New message");
+            const results = await Promise.allSettled(
               tokens.map((t) =>
                 sendNotification({
-                  notification: { title: senderNumber, body: notifBody },
-                  data: { senderNumber: String(senderNumber) },
+                  notification: { title: senderName, body: notifBody },
+                  data: {
+                    senderNumber: String(senderNumber),
+                    senderName: String(senderName),
+                    body: String(notifBody),
+                  },
+                  android: { notification: { channelId: "default_channel" } },
                   token: t,
-                }).catch((e) =>
-                  console.error("push to token failed:", e.message)
-                )
+                })
               )
             );
+            results.forEach((r, i) => {
+              if (r.status === "fulfilled") {
+                console.log(`[push] sent OK to token #${i}`);
+              } else {
+                console.error(`[push] FCM send FAILED for token #${i}:`, r.reason?.message || r.reason);
+              }
+            });
           } catch (pushError) {
-            console.error("push lookup failed:", pushError.message);
+            console.error("[push] lookup failed:", pushError.message);
           }
         }
       } catch (socketError) {
@@ -241,7 +286,7 @@ const updateMessage = async (req, res) => {
           text: "",
           editedAt: new Date(),
         }
-      : { text: text, editedAt: new Date() };
+      : { text: encryptText(text), editedAt: new Date() };
 
     const updated = await MessageModel.findOneAndUpdate(
       { _id: _id },
@@ -252,12 +297,17 @@ const updateMessage = async (req, res) => {
       return res.status(404).json(new MessageDto(404, `Message not found.`));
     }
 
+    // Plaintext view for the socket relay + HTTP response (decrypts at-rest
+    // text; a no-op for E2EE/empty text).
+    const out = updated.toObject();
+    out.text = decryptText(out.text);
+
     // Real-time: push the edit to both parties so their open chat updates
     // immediately. For encrypted edits we relay the cipher fields so the
     // recipient can decrypt the new text client-side.
     emitToUsers([updated.senderNumber, updated.receiverNumber], "message-edited", {
       _id: String(updated._id),
-      text: updated.text,
+      text: out.text,
       encVersion: updated.encVersion,
       ciphertext: updated.ciphertext,
       nonce: updated.nonce,
@@ -268,7 +318,7 @@ const updateMessage = async (req, res) => {
       receiverNumber: updated.receiverNumber,
     });
 
-    res.status(200).json(new MessageDto(200, `Message updated.`, { message: updated }));
+    res.status(200).json(new MessageDto(200, `Message updated.`, { message: out }));
   } catch (error) {
     res.status(500).json(new MessageDto(500, `Server Error.`, error));
   }

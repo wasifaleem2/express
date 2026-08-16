@@ -1,13 +1,23 @@
 const router = require("express").Router();
+const rateLimit = require("express-rate-limit");
 const { fetchUsers, verifyUser, login, saveUser, updateUser, deleteUser, deleteAll, logout, searchUser, pushNotificationTest, registerAppToken, registerPublicKey, getPublicKey } = require("../controllers/UserController/index");
 const {getMessage, getMessagedUsers, sendMessage, updateMessage, deleteMessage, deleteChat, getAllMessages, getNoOfMessage} = require("../controllers/MessagesController/index")
 //middlewares
 const authenticate = require("../middlewares/authenticate/index")
 const checkUser = require("../middlewares/checkUser/index")
 
-router.post('/save', saveUser)
-router.post(`/verify`, verifyUser)
-router.post(`/login`, login)
+// Stricter limit on auth endpoints to slow brute-force / credential stuffing.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { status: 429, message: "Too many attempts, try again later." },
+});
+
+router.post('/save', authLimiter, saveUser)
+router.post(`/verify`, authLimiter, verifyUser)
+router.post(`/login`, authLimiter, login)
 // Removed: POST /notification/:token was unauthenticated and could push to any
 // FCM token. Removed: DELETE /deleteAll let any logged-in user wipe every user.
 router.get('/users',authenticate, fetchUsers)

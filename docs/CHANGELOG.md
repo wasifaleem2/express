@@ -2,6 +2,44 @@
 
 Notable changes to the Express backend, newest first.
 
+## 2026-08 — Key rotation (encryption keyring)
+
+- `utilis/encryption.js` now supports a **keyring**: the stored format is
+  `enc:<keyId>:…`, and each message is decrypted with the key whose id it carries.
+  This lets you **rotate `MESSAGE_ENC_KEY` without making old messages
+  unreadable** — add a new key, point `MESSAGE_ENC_KEY_CURRENT` at it; old rows
+  keep decrypting with their original key.
+- **Backward compatible:** with only `MESSAGE_ENC_KEY` set, it behaves exactly as
+  before (key id `v1`), so existing `enc:v1:…` rows still decrypt.
+- New env (optional, for rotation): `MESSAGE_ENC_KEYS` (JSON `{id: material}`) +
+  `MESSAGE_ENC_KEY_CURRENT`.
+- New `scripts/reencrypt-messages.js` — re-encrypts all rows to the current key
+  so an old key can be safely retired (idempotent).
+- *(Verified: after adding a new current key, an old-key message still decrypts
+  and new messages use the new key.)*
+
+## 2026-08 — Security hardening (server-stored model)
+
+Moving to a server-stored model (server can read messages), with defense-in-depth:
+- **Encryption at rest** — new `utilis/encryption.js` (AES-256-GCM). Plaintext
+  message `text` is encrypted before saving (`enc:v1:` + base64 iv|tag|ct) and
+  decrypted on read. Legacy plaintext and E2EE (`text: ""`) pass through
+  unchanged. Key from **`MESSAGE_ENC_KEY`** (set a strong random value via a
+  secrets manager in prod). *(Verified: DB stores `enc:v1:…`; reads return
+  plaintext.)*
+- **Authorization / IDOR fix** — `getMessage` now requires the caller to be one
+  of the two participants (else `403`); `getAllMessages` and `getNoOfMessage`
+  derive the user from the **JWT** (`req.user.phone`) instead of trusting a
+  query param. *(Verified: a non-participant gets 403.)*
+- **helmet** — security headers (HSTS, nosniff, frameguard, …) on all responses.
+- **Rate limiting** — `express-rate-limit`: 300/15min on `/api`, and a stricter
+  20/15min on `/save`, `/verify`, `/login` to slow brute force.
+- **`app.set('trust proxy', 1)`** — required behind Azure Container Apps' ingress
+  proxy; without it every rate-limited request threw
+  `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` and login failed in production.
+
+New env var: `MESSAGE_ENC_KEY`.
+
 ## 2026-08 — Real-time edit / delete propagation
 
 - **`updateMessage`** now emits a `message-edited` socket event to both the

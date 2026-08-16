@@ -1,1 +1,8 @@
 node_modules
+.env
+.env.*
+.git
+.gitignore
+docs
+*.md
+mongoose.txt

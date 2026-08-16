@@ -1,8 +1,27 @@
 const http = require("http");
 const socketIO = require("socket.io");
 const express = require('express')
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const app = express();
+
+// Behind Azure Container Apps' ingress proxy, the real client IP arrives in the
+// X-Forwarded-For header. Trust exactly one proxy hop so express-rate-limit can
+// key on the true client IP (and doesn't throw ERR_ERL_UNEXPECTED_X_FORWARDED_FOR).
+// '1' (not 'true') avoids clients spoofing X-Forwarded-For to dodge rate limits.
+app.set('trust proxy', 1);
+
+app.use(helmet());
 app.use(express.json({ limit: '1mb' }));
+
+// General API rate limit — blunt protection against abuse/scraping.
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api', apiLimiter);
 const databaseConnect = require("./database/index")
 const {socketConnect} = require("./utilis/Socket");
 const UserModel = require("./models/UserModel");
@@ -12,21 +31,32 @@ const { initializeApp, cert } = require("firebase-admin/app");
 // load env 
 require('dotenv').config()
 
-// the /firebase folder is gitignored, so the key is missing on fresh clones.
-// warn instead of crashing the whole chat server over notifications.
-const serviceAccountPath =
-  process.env.FIREBASE_SERVICE_ACCOUNT ||
-  './firebase/app-notification-ec741-firebase-adminsdk-fbsvc-92936dea08.json';
+// FIREBASE_SERVICE_ACCOUNT accepts EITHER:
+//   - the full service-account JSON (starts with "{") — preferred for cloud
+//     deploys, so the key file never ships in the image, or
+//   - a path to the JSON file (e.g. ./firebase/…adminsdk….json) for local dev.
+// If unset, falls back to the bundled key file (warns instead of crashing).
+function loadServiceAccount() {
+  const val = (process.env.FIREBASE_SERVICE_ACCOUNT || '').trim();
+  if (val.startsWith('{')) {
+    return JSON.parse(val); // whole JSON provided via env/secret
+  }
+  const path = require('path');
+  const file =
+    val ||
+    './firebase/app-notification-ec741-firebase-adminsdk-fbsvc-b7e9755e5c.json';
+  return require(path.resolve(file)); // treat as a file path
+}
 
 try {
-  const serviceAccount = require(serviceAccountPath);
+  const serviceAccount = loadServiceAccount();
   initializeApp({
     credential: cert(serviceAccount),
   });
   console.log('Firebase admin initialized');
 } catch (error) {
   console.warn(
-    `Firebase admin not initialized (${serviceAccountPath}): ${error.message}. Push notifications are disabled.`
+    `Firebase admin not initialized: ${error.message}. Push notifications are disabled.`
   );
 }
 
