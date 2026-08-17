@@ -8,7 +8,6 @@ const { connectedSockets } = require("../../utilis/Socket");
 const MessageDto = require("../../dtos/messageDto");
 const { getUserTokens } = require("../../utilis/appTokens");
 const sendNotification = require("../../utilis/sendNotification");
-const { encryptText, decryptText } = require("../../utilis/encryption");
 
 // Emit a socket event to each given phone number that has a live socket.
 // Used to push edits/deletes to both parties in real time.
@@ -63,13 +62,9 @@ const getMessage = (req, res) => {
   })
     .exec()
     .then((msgs) => {
-      // Decrypt at-rest plaintext for transport (no-op for E2EE/empty text).
-      const out = msgs.map((m) => {
-        const o = m.toObject();
-        o.text = decryptText(o.text);
-        return o;
-      });
-      res.status(200).json(new MessageDto(200, `Messages for user with phone ${senderNumber}`, {messages: out}));
+      // E2EE: return ciphertext + wrapped keys verbatim; only the participants'
+      // devices can decrypt.
+      res.status(200).json(new MessageDto(200, `Messages for user with phone ${senderNumber}`, {messages: msgs}));
     })
     .catch((err) => {
       console.log(err);
@@ -88,12 +83,7 @@ const getAllMessages = (req, res) => {
   })
     .exec()
     .then((msgs) => {
-      const out = msgs.map((m) => {
-        const o = m.toObject();
-        o.text = decryptText(o.text);
-        return o;
-      });
-      res.status(200).json(new MessageDto(200, `All messages for user with phone ${phone} with all other users.`, {messages: out}));
+      res.status(200).json(new MessageDto(200, `All messages for user with phone ${phone} with all other users.`, {messages: msgs}));
     })
     .catch((err) => {
       console.log(err);
@@ -147,35 +137,32 @@ const getMessagedUsers = async (req, res) => {
 const sendMessage = async (req, res) => {
   let senderNumber = req.body.senderNumber;
   let receiverNumber = req.body.receiverNumber;
-  let text = req.body.text;
   let messageType = req.body.messageType;
   // The SERVER stamps the canonical timestamp in UTC (ISO 8601). We never trust
   // the client clock — this keeps ordering and times correct across devices in
   // different timezones. Clients convert this UTC value to local time only for
   // display (toLocaleTimeString).
   let dateTime = new Date().toISOString();
-  // E2EE fields (present when the client encrypted the message). The server
-  // stores these opaquely and can never read the plaintext.
-  let encVersion = req.body.encVersion || 0;
-  let ciphertext = req.body.ciphertext || "";
+  // E2EE payload, produced entirely on the sender's device. The server stores
+  // these opaquely and can never read the plaintext:
+  //   text = AES-256-GCM ciphertext (base64), nonce = IV (base64),
+  //   encryptedMessageKeys = { phone: wrapped Message Key } (incl. sender copy).
+  let text = req.body.text || "";
   let nonce = req.body.nonce || "";
-  let senderPub = req.body.senderPub || "";
-  let envelopes = Array.isArray(req.body.envelopes) ? req.body.envelopes : [];
+  let encryptedMessageKeys =
+    req.body.encryptedMessageKeys && typeof req.body.encryptedMessageKeys === "object"
+      ? req.body.encryptedMessageKeys
+      : {};
   let replyTo = req.body.replyTo || null;
-  console.log("message data received", dateTime, "encrypted:", !!encVersion)
+  console.log("message received (e2ee):", dateTime, "recipients:", Object.keys(encryptedMessageKeys))
   let msg = new MessageModel({
     senderNumber: senderNumber,
     receiverNumber: receiverNumber,
-    // E2EE msgs store ciphertext (text ""). Plaintext msgs are encrypted at
-    // rest with AES-256-GCM so a DB/backup leak doesn't expose message content.
-    text: encVersion ? "" : encryptText(text),
+    text, // ciphertext, stored verbatim
+    nonce,
+    encryptedMessageKeys,
     dateTime: dateTime || "",
     messageType: messageType,
-    encVersion,
-    ciphertext,
-    nonce,
-    senderPub,
-    envelopes,
     replyTo,
   });
   msg
@@ -185,14 +172,11 @@ const sendMessage = async (req, res) => {
         _id: String(msg._id),
         senderNumber,
         receiverNumber,
-        text: encVersion ? "" : text,
+        text, // ciphertext
+        nonce,
+        encryptedMessageKeys,
         dateTime,
         messageType,
-        encVersion,
-        ciphertext,
-        nonce,
-        senderPub,
-        envelopes,
         replyTo,
         deliveredTo: [],
         readBy: [],
@@ -235,7 +219,8 @@ const sendMessage = async (req, res) => {
             // message text for plaintext messages (generic for legacy E2EE).
             const sender = await UserModel.findOne({ phone: senderNumber }).select("name");
             const senderName = sender?.name || senderNumber;
-            const notifBody = encVersion ? "🔒 New message" : (text || "New message");
+            // E2EE: the server can't read the message, so the push is generic.
+            const notifBody = "🔒 New message";
             const results = await Promise.allSettled(
               tokens.map((t) =>
                 sendNotification({
@@ -277,23 +262,19 @@ const sendMessage = async (req, res) => {
 
 const updateMessage = async (req, res) => {
   let _id = req.params.id;
-  let text = req.body.text;
-  // Re-encrypted payload for an edited message (client encrypts the new text).
-  let encVersion = req.body.encVersion || 0;
   try {
-    // Build the update: for encrypted edits swap the cipher fields and blank
-    // the plaintext; for legacy edits just set text.
-    const update = encVersion
-      ? {
-          encVersion,
-          ciphertext: req.body.ciphertext || "",
-          nonce: req.body.nonce || "",
-          senderPub: req.body.senderPub || "",
-          envelopes: Array.isArray(req.body.envelopes) ? req.body.envelopes : [],
-          text: "",
-          editedAt: new Date(),
-        }
-      : { text: encryptText(text), editedAt: new Date() };
+    // An edit re-encrypts on the device with a fresh Message Key, so it swaps
+    // in new cipher fields (ciphertext + nonce + wrapped keys).
+    const update = {
+      text: req.body.text || "",
+      nonce: req.body.nonce || "",
+      encryptedMessageKeys:
+        req.body.encryptedMessageKeys &&
+        typeof req.body.encryptedMessageKeys === "object"
+          ? req.body.encryptedMessageKeys
+          : {},
+      editedAt: new Date(),
+    };
 
     const updated = await MessageModel.findOneAndUpdate(
       { _id: _id },
@@ -304,28 +285,19 @@ const updateMessage = async (req, res) => {
       return res.status(404).json(new MessageDto(404, `Message not found.`));
     }
 
-    // Plaintext view for the socket relay + HTTP response (decrypts at-rest
-    // text; a no-op for E2EE/empty text).
-    const out = updated.toObject();
-    out.text = decryptText(out.text);
-
-    // Real-time: push the edit to both parties so their open chat updates
-    // immediately. For encrypted edits we relay the cipher fields so the
-    // recipient can decrypt the new text client-side.
+    // Real-time: relay the re-encrypted fields to both parties so their open
+    // chat updates immediately; the recipient decrypts the new text locally.
     emitToUsers([updated.senderNumber, updated.receiverNumber], "message-edited", {
       _id: String(updated._id),
-      text: out.text,
-      encVersion: updated.encVersion,
-      ciphertext: updated.ciphertext,
+      text: updated.text, // ciphertext
       nonce: updated.nonce,
-      senderPub: updated.senderPub,
-      envelopes: updated.envelopes,
+      encryptedMessageKeys: updated.encryptedMessageKeys,
       editedAt: updated.editedAt,
       senderNumber: updated.senderNumber,
       receiverNumber: updated.receiverNumber,
     });
 
-    res.status(200).json(new MessageDto(200, `Message updated.`, { message: out }));
+    res.status(200).json(new MessageDto(200, `Message updated.`, { message: updated }));
   } catch (error) {
     res.status(500).json(new MessageDto(500, `Server Error.`, error));
   }
@@ -357,7 +329,13 @@ const deleteMessage = async (req, res) => {
       // "" doesn't trip schema validation. The tombstone is all that remains.
       const updated = await MessageModel.findByIdAndUpdate(
         _id,
-        { deletedForAll: true, deletedForAllAt: new Date(), text: "" },
+        {
+          deletedForAll: true,
+          deletedForAllAt: new Date(),
+          text: "",
+          nonce: "",
+          encryptedMessageKeys: {},
+        },
         { new: true }
       );
 

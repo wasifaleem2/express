@@ -44,7 +44,7 @@ function loadServiceAccount() {
   const path = require('path');
   const file =
     val ||
-    './firebase/app-notification-ec741-firebase-adminsdk-fbsvc-b7e9755e5c.json';
+    './firebase/app-notification-ec741-firebase-adminsdk-fbsvc-92936dea08.json';
   return require(path.resolve(file)); // treat as a file path
 }
 

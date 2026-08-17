@@ -1,112 +1,77 @@
 # End-to-End Encryption — The Server's Role
 
-The chat is **end-to-end encrypted**, which means the **server never sees
-message plaintext and never holds any private key**. All encryption and
-decryption happens on the phones. This document covers the *only* things the
-backend does for E2EE:
+Messages are **end-to-end encrypted**: the server **never sees plaintext and
+never holds a private key**. All encryption/decryption happens on the phones.
+The backend does only two things:
 
-1. Acts as a **public-key directory** (store/serve users' public keys).
-2. **Stores and relays opaque ciphertext** without being able to read it.
+1. Acts as a **public-key directory**.
+2. **Stores and relays opaque ciphertext + wrapped keys** it cannot read.
 
-For the actual cryptography (how keys are made and how messages are
-encrypted/decrypted), see
+Crypto details (Message Key, AES‑256‑GCM, sealed box) are in
 [`client/docs/ENCRYPTION.md`](../../client/docs/ENCRYPTION.md).
 
 ## 1. Public-key directory
-
-Each user's **public** key (safe to store — it's not secret) lives on the user
-document, and there are two authenticated endpoints to publish and look it up.
-
-**Model** — [`models/UserModel.js`](../models/UserModel.js):
-```js
-publicKey: { type: String, default: "" }   // base64 Curve25519 public key
-```
-
-**Endpoints** — [`routes/index.js`](../routes/index.js) →
+`UserModel.publicKey` (base64 Curve25519 public key) —
+[`models/UserModel.js`](../models/UserModel.js). Endpoints in
 [`controllers/UserController/index.js`](../controllers/UserController/index.js):
 
-| Route | Auth | Controller | What it does |
-|---|---|---|---|
-| `POST /api/keys` | ✅ | `registerPublicKey` | upsert the **caller's** own public key (`{ publicKey }`) onto their user doc |
-| `GET /api/keys/:phone` | ✅ | `getPublicKey` | return another user's public key so the caller can encrypt to them |
+| Route | Auth | Does |
+|---|---|---|
+| `POST /api/keys` | ✅ | upsert the caller's own public key `{ publicKey }` |
+| `GET /api/keys/:phone` | ✅ | return a user's public key so the caller can wrap a Message Key to them |
 
-The client calls `POST /keys` on every app launch (idempotent upsert) and
-`GET /keys/:phone` before sending a message. If `GET` returns 404 (that user has
-never published a key), the client falls back to sending plaintext.
-
-> The server only ever receives/returns **public** keys. Private keys are
-> generated and kept in the device Keychain and are never transmitted.
+Only **public** keys are ever transmitted/stored.
 
 ## 2. Encrypted message storage & relay
-
-The server stores the encrypted fields verbatim and cannot decrypt them.
-
-**Model** — [`models/MessagesModel.js`](../models/MessagesModel.js):
+Model — [`models/MessagesModel.js`](../models/MessagesModel.js):
 ```js
-text:       { type: String, default: "" },   // plaintext ONLY for legacy/fallback (encVersion 0)
-encVersion: { type: Number, default: 0 },    // 0 = plaintext/legacy, 1 = E2E encrypted
-ciphertext: { type: String, default: "" },   // base64 secretbox(text)
-nonce:      { type: String, default: "" },   // base64 nonce for the ciphertext
-senderPub:  { type: String, default: "" },   // sender's public key (needed to open envelopes)
-envelopes:  [ { phone, key, keyNonce } ],    // per-recipient wrapped content key (group-ready)
+text:  { type: String, default: "" },   // AES-256-GCM ciphertext (base64); "" = tombstone
+nonce: { type: String, default: "" },   // AES-GCM IV (base64)
+encryptedMessageKeys: { type: Object, default: {} }, // { phone: <sealed Message Key b64> }
+// + senderNumber, receiverNumber, dateTime (server UTC), messageType, replyTo,
+//   status, deliveredTo[], readBy[], editedAt, deletedForAll(+At), deletedFor[], timestamps
 ```
+There are **no** `encVersion`, `ciphertext`, `senderPub`, or `envelopes` fields —
+removed in the redesign.
 
-**Send** — `sendMessage` in
-[`controllers/MessagesController/index.js`](../controllers/MessagesController/index.js):
-- Persists the fields as received. For encrypted messages (`encVersion` set) it
-  stores `text: ""` — **plaintext is never written** for an encrypted message.
-- Relays the same payload to the recipient over the `receive-message` socket
-  event (the client decrypts it).
-- Sends a **generic push notification** (`"🔒 New message"`) because the server
-  can't read the message to preview it.
+Controllers — [`controllers/MessagesController/index.js`](../controllers/MessagesController/index.js):
+- **`sendMessage`**: stores `text`/`nonce`/`encryptedMessageKeys` **verbatim** (no
+  server-side encryption). `dateTime` is server-stamped UTC. Relays the same cipher
+  fields over the `receive-message` socket event. FCM push body is generic
+  (`"🔒 New message"`) since the server can't read the text.
+- **`updateMessage`**: swaps in the re-encrypted `text`/`nonce`/`encryptedMessageKeys`
+  and relays via `message-edited`.
+- **`getMessage`/`getAllMessages`**: return ciphertext as-is (client decrypts).
+- **`deleteMessage`** (scope `all`): tombstone — clears `text`, `nonce`, and
+  `encryptedMessageKeys`.
 
-**Edit** — `updateMessage`:
-- Accepts re-encrypted cipher fields and relays them via the `message-edited`
-  socket event so the recipient can decrypt the new text.
+> The previous at-rest AES-GCM layer (`utilis/encryption.js` + `scripts/reencrypt-messages.js`)
+> was **removed** — it's redundant under E2EE (the body is already client ciphertext).
 
 ## What a stored message looks like
-
-Encrypted (`encVersion: 1`):
 ```json
 {
   "senderNumber": "+92...333",
   "receiverNumber": "+92...444",
-  "text": "",
-  "encVersion": 1,
-  "ciphertext": "u9F2k…==",
+  "text": "u9F2k…==",
   "nonce": "a1B2…==",
-  "senderPub": "Qk8…=",
-  "envelopes": [
-    { "phone": "+92...444", "key": "…", "keyNonce": "…" },
-    { "phone": "+92...333", "key": "…", "keyNonce": "…" }
-  ]
+  "encryptedMessageKeys": {
+    "+92...444": "<sealed base64>",
+    "+92...333": "<sealed base64>"
+  }
 }
 ```
-A database dump (or a breach of the container / MongoDB / Atlas) yields only
-this — **not** the message text.
+A DB dump yields only this — never the message text.
 
-Plaintext / legacy (`encVersion: 0`) — what you get before both parties have
-published keys, or for pre-E2EE messages:
-```json
-{ "text": "Testing", "encVersion": 0, "ciphertext": "", "envelopes": [] }
-```
-
-## What the server can and cannot see
-
+## Can / cannot see
 | Can see (metadata) | Cannot see |
 |---|---|
-| who messaged whom (`senderNumber`/`receiverNumber`) | message **text** (for `encVersion: 1`) |
-| timestamps, message type, read/delivery status | any **private key** |
-| public keys | the per‑message `contentKey` (it's wrapped to recipients) |
+| who ↔ whom, timestamps, type, delivery/read status, public keys | message **text**, any **private key**, the per-message **Message Key** |
 
 ## Operational notes
-
-- The `/keys` endpoints must be present in the **deployed** image. If a deploy
-  is stale and `GET/POST /api/keys` return **404**, no device can publish or
-  fetch keys, so **every** message silently falls back to plaintext. Verify
-  after deploy: `GET /api/keys/<phone>` should return **401** (exists, needs
-  auth), not 404.
-- Existing plaintext (`encVersion: 0`) messages cannot be retroactively
-  encrypted — no keys existed when they were sent.
-- Firebase and DB credentials are provided at runtime (env vars), never baked
-  into the image — so the public image contains no secrets.
+- The `/keys` endpoints **must be present in the deployed image**. If a stale
+  deploy returns **404** for `GET /api/keys/:phone`, no device can fetch keys and
+  every send **fails** (enforced mode — no plaintext fallback). Verify after deploy:
+  `GET /api/keys/<phone>` → **401** (exists), not 404.
+- Old messages from the previous scheme are incompatible and were cleared.
+- Secrets (DB URL, JWT) come from env vars at runtime, never baked into the image.
