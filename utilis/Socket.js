@@ -1,8 +1,23 @@
 const UserModel = require("../models/UserModel");
 const MessageModel = require("../models/MessagesModel");
+const GroupModel = require("../models/GroupModel");
 
 let connectedUsers = [];
 let connectedSockets = {};
+
+// Emit an event to every live member of a group (looked up by groupId).
+const emitToRoster = async (groupId, event, payload) => {
+  try {
+    const group = await GroupModel.findOne({ groupId }).select("members");
+    if (!group) return;
+    group.members.forEach((phone) => {
+      const s = connectedSockets[phone];
+      if (s) s.emit(event, payload);
+    });
+  } catch (err) {
+    console.error("emitToRoster failed:", err.message);
+  }
+};
 const socketConnect = async (socket) => {
   const userPhone = socket.handshake.query.userPhone;
   console.log("socket id for new conn ", socket.id);
@@ -33,8 +48,26 @@ const socketConnect = async (socket) => {
   // in real time. Using $addToSet keeps this idempotent and group-ready.
 
   // R's device received S's messages (delivered, not necessarily read).
+  // Group form: data = { groupId, member } — mark all group messages NOT authored
+  // by `member` as delivered to `member`, and tell the roster to upgrade bubbles.
   socket.on("message-delivered", async (data) => {
     try {
+      if (data.groupId) {
+        await MessageModel.updateMany(
+          {
+            groupId: data.groupId,
+            senderNumber: { $ne: data.member },
+            readBy: { $ne: data.member },
+          },
+          { $addToSet: { deliveredTo: data.member } }
+        );
+        emitToRoster(data.groupId, "receipt-update", {
+          groupId: data.groupId,
+          member: data.member,
+          type: "delivered",
+        });
+        return;
+      }
       await MessageModel.updateMany(
         {
           senderNumber: data.senderNumber,
@@ -59,9 +92,19 @@ const socketConnect = async (socket) => {
     }
   });
 
-  // Typing indicator: relay to the recipient only (no DB write). data =
-  // { senderNumber: me, receiverNumber: peer, isTyping }.
+  // Typing indicator: relay only (no DB write).
+  //   1:1   data = { senderNumber, receiverNumber, isTyping }
+  //   group data = { senderNumber, groupId, members: [phone], isTyping, senderName }
   socket.on("typing", (data) => {
+    if (data.groupId && Array.isArray(data.members)) {
+      data.members
+        .filter((m) => m !== data.senderNumber)
+        .forEach((m) => {
+          const s = connectedSockets[m];
+          if (s) s.emit("typing", data);
+        });
+      return;
+    }
     const recipientSocket = connectedSockets[data.receiverNumber];
     if (recipientSocket) {
       recipientSocket.emit("typing", data);
@@ -69,8 +112,21 @@ const socketConnect = async (socket) => {
   });
 
   // R opened the chat and read S's messages.
+  // Group form: data = { groupId, member } — same fan-out as delivered.
   socket.on("message-read", async (data) => {
     try {
+      if (data.groupId) {
+        await MessageModel.updateMany(
+          { groupId: data.groupId, senderNumber: { $ne: data.member } },
+          { $addToSet: { deliveredTo: data.member, readBy: data.member } }
+        );
+        emitToRoster(data.groupId, "receipt-update", {
+          groupId: data.groupId,
+          member: data.member,
+          type: "read",
+        });
+        return;
+      }
       await MessageModel.updateMany(
         {
           senderNumber: data.senderNumber,

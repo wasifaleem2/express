@@ -3,6 +3,7 @@ const UserModel = require("../../models/UserModel");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const MessageModel = require("../../models/MessagesModel");
+const GroupModel = require("../../models/GroupModel");
 const { StatusCodes } = require("http-status-codes");
 const { connectedSockets } = require("../../utilis/Socket");
 const MessageDto = require("../../dtos/messageDto");
@@ -10,12 +11,72 @@ const { getUserTokens } = require("../../utilis/appTokens");
 const sendNotification = require("../../utilis/sendNotification");
 
 // Emit a socket event to each given phone number that has a live socket.
-// Used to push edits/deletes to both parties in real time.
+// Used to push edits/deletes to both parties (or every group member) in real time.
 const emitToUsers = (phones, event, payload) => {
   phones.forEach((phone) => {
     const socket = connectedSockets[phone];
     if (socket) {
       socket.emit(event, payload);
+    }
+  });
+};
+
+// Resolve who should receive real-time edit/delete events for a message: the
+// full group roster for a group message, or the two parties for a 1:1.
+const messageAudience = async (message) => {
+  if (message.groupId) {
+    const group = await GroupModel.findOne({ groupId: message.groupId }).select("members");
+    return group ? group.members : [message.senderNumber];
+  }
+  return [message.senderNumber, message.receiverNumber];
+};
+
+// WhatsApp-style DATA-ONLY FCM push. The server never sees plaintext: it sends
+// the ciphertext + the *recipient's own* wrapped Message Key, and the device
+// decrypts with its private key and renders the real text via notifee. A
+// data-only message (no `notification` block) wakes the app's background handler
+// even when killed. For group messages we also pass groupId/groupName so the
+// device can title the notification with the group. Best-effort, never throws.
+const sendChatPush = async ({
+  tokens,
+  senderNumber,
+  senderName,
+  messageId,
+  text,
+  nonce,
+  encKey,
+  groupId,
+  groupName,
+}) => {
+  const data = {
+    type: "chat",
+    messageId: String(messageId),
+    senderNumber: String(senderNumber),
+    senderName: String(senderName),
+    text: String(text), // AES-GCM ciphertext (base64)
+    nonce: String(nonce), // AES-GCM IV (base64)
+    encKey: String(encKey || ""), // this recipient's sealed Message Key
+  };
+  if (groupId) {
+    data.groupId = String(groupId);
+    data.groupName = String(groupName || "");
+  }
+  const results = await Promise.allSettled(
+    tokens.map((t) =>
+      sendNotification({
+        data,
+        // priority "high" so FCM wakes the device / a killed app promptly
+        // (normal priority is delayed or dropped in Doze).
+        android: { priority: "high" },
+        token: t,
+      })
+    )
+  );
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") {
+      console.log(`[push] sent OK to token #${i}`);
+    } else {
+      console.error(`[push] FCM send FAILED for token #${i}:`, r.reason?.message || r.reason);
     }
   });
 };
@@ -36,10 +97,33 @@ const getNoOfMessage = async (req, res) => {
     });
 };
 
-const getMessage = (req, res) => {
+const getMessage = async (req, res) => {
   const senderNumber = req.query.senderNumber;
   const receiverNumber = req.query.receiverNumber;
+  const groupId = req.query.groupId;
   const me = req.user?.phone;
+
+  // ---- Group thread ----
+  if (groupId) {
+    try {
+      const group = await GroupModel.findOne({ groupId });
+      if (!group) {
+        return res.status(404).json(new MessageDto(404, "Group not found."));
+      }
+      if (!group.members.includes(me)) {
+        return res.status(403).json(new MessageDto(403, "Not a member of this group."));
+      }
+      const msgs = await MessageModel.find({
+        $and: [{ groupId }, { deletedFor: { $ne: me } }],
+      }).exec();
+      return res
+        .status(200)
+        .json(new MessageDto(200, `Messages for group ${groupId}`, { messages: msgs }));
+    } catch (err) {
+      console.log(err);
+      return res.status(500).json(new MessageDto(500, `Server Error`, err));
+    }
+  }
 
   // Authorization: the caller must be one of the two participants. Prevents
   // reading someone else's thread by passing arbitrary numbers (IDOR).
@@ -135,146 +219,184 @@ const getMessagedUsers = async (req, res) => {
 };
 
 const sendMessage = async (req, res) => {
-  let senderNumber = req.body.senderNumber;
-  let receiverNumber = req.body.receiverNumber;
-  let messageType = req.body.messageType;
+  const senderNumber = req.body.senderNumber;
+  // groupId set => group message (fan out to members); else 1:1 to receiverNumber.
+  const groupId = req.body.groupId || null;
+  const receiverNumber = groupId ? null : req.body.receiverNumber;
+  const messageType = req.body.messageType;
   // The SERVER stamps the canonical timestamp in UTC (ISO 8601). We never trust
   // the client clock — this keeps ordering and times correct across devices in
   // different timezones. Clients convert this UTC value to local time only for
   // display (toLocaleTimeString).
-  let dateTime = new Date().toISOString();
+  const dateTime = new Date().toISOString();
   // E2EE payload, produced entirely on the sender's device. The server stores
   // these opaquely and can never read the plaintext:
   //   text = AES-256-GCM ciphertext (base64), nonce = IV (base64),
-  //   encryptedMessageKeys = { phone: wrapped Message Key } (incl. sender copy).
-  let text = req.body.text || "";
-  let nonce = req.body.nonce || "";
-  let encryptedMessageKeys =
+  //   encryptedMessageKeys = { phone: wrapped Message Key } (one per member,
+  //   incl. the sender's self-copy).
+  const text = req.body.text || "";
+  const nonce = req.body.nonce || "";
+  const encryptedMessageKeys =
     req.body.encryptedMessageKeys && typeof req.body.encryptedMessageKeys === "object"
       ? req.body.encryptedMessageKeys
       : {};
-  let replyTo = req.body.replyTo || null;
-  console.log("message received (e2ee):", dateTime, "recipients:", Object.keys(encryptedMessageKeys))
-  let msg = new MessageModel({
-    senderNumber: senderNumber,
-    receiverNumber: receiverNumber,
+  const replyTo = req.body.replyTo || null;
+
+  // For group sends, validate the sender is a member and resolve the roster.
+  let group = null;
+  if (groupId) {
+    group = await GroupModel.findOne({ groupId });
+    if (!group) {
+      return res.status(404).json(new MessageDto(404, "Group not found."));
+    }
+    if (!group.members.includes(senderNumber)) {
+      return res.status(403).json(new MessageDto(403, "Not a member of this group."));
+    }
+  }
+
+  console.log(
+    "message received (e2ee):",
+    dateTime,
+    groupId ? `group ${groupId}` : `to ${receiverNumber}`,
+    "recipients:",
+    Object.keys(encryptedMessageKeys)
+  );
+
+  const msg = new MessageModel({
+    senderNumber,
+    receiverNumber,
+    groupId,
     text, // ciphertext, stored verbatim
     nonce,
     encryptedMessageKeys,
-    dateTime: dateTime || "",
-    messageType: messageType,
+    dateTime,
+    messageType,
     replyTo,
   });
-  msg
-    .save()
-    .then(async () => {
-      const payload = {
-        _id: String(msg._id),
-        senderNumber,
-        receiverNumber,
-        text, // ciphertext
-        nonce,
-        encryptedMessageKeys,
-        dateTime,
-        messageType,
-        replyTo,
-        deliveredTo: [],
-        readBy: [],
-      };
 
-      // The message is already persisted at this point. Live delivery is
-      // best-effort: a sender who never registered a socket (or a recipient
-      // who is offline) must not turn a successful save into a 500.
-      try {
-        const senderSocket = connectedSockets[senderNumber];
-        const recipient = await UserModel.findOne({ phone: receiverNumber });
-        const recipientOnline = !!connectedSockets[receiverNumber];
+  try {
+    await msg.save();
+  } catch (error) {
+    console.error("Error saving message:", error);
+    return res
+      .status(500)
+      .send({ error: error, message: "Error sending message.." });
+  }
 
-        if (senderSocket) {
-          senderSocket.emit("receive-message", payload);
-          if (recipient && recipient.socketId) {
-            senderSocket.to(recipient.socketId).emit("receive-message", payload);
-          }
-        } else if (recipient && recipient.socketId) {
-          // no sender socket to relay through — deliver via the server
-          global.io.to(recipient.socketId).emit("receive-message", payload);
-        } else {
-          console.log(`No live socket for ${senderNumber} -> ${receiverNumber}`);
+  const payload = {
+    _id: String(msg._id),
+    senderNumber,
+    receiverNumber,
+    groupId,
+    text, // ciphertext
+    nonce,
+    encryptedMessageKeys,
+    dateTime,
+    messageType,
+    replyTo,
+    deliveredTo: [],
+    readBy: [],
+  };
+
+  // The message is already persisted. Live delivery + push are best-effort —
+  // a delivery failure must never turn a successful save into a 500.
+  try {
+    const sender = await UserModel.findOne({ phone: senderNumber }).select("name");
+    const senderName = sender?.name || senderNumber;
+
+    if (groupId) {
+      // Fan out to every member except the sender. Each member gets the same
+      // payload and decrypts with their own wrapped key; offline members get a
+      // data-only push carrying only their own wrapped key.
+      const others = group.members.filter((m) => m !== senderNumber);
+      for (const member of others) {
+        const memberSocket = connectedSockets[member];
+        if (memberSocket) {
+          memberSocket.emit("receive-message", payload);
+          continue;
         }
-
-        // If the recipient has no live socket, notify them via FCM push so
-        // offline users still get the message. Best-effort: never fail the save.
-        if (!recipient) {
-          console.log(`[push] recipient ${receiverNumber} not found — no push`);
-        } else if (recipientOnline) {
-          console.log(`[push] ${receiverNumber} is ONLINE (live socket) — push skipped by design`);
-        } else {
-          try {
-            const tokens = await getUserTokens(recipient._id);
-            console.log(`[push] ${receiverNumber} offline, ${tokens.length} registered token(s)`);
-            if (tokens.length === 0) {
-              console.log(`[push] no FCM tokens for ${receiverNumber} — their device never registered one (or it was moved to another account on the same device)`);
-            }
-            // Title = sender's display name (fall back to phone); body = the
-            // message text for plaintext messages (generic for legacy E2EE).
-            const sender = await UserModel.findOne({ phone: senderNumber }).select("name");
-            const senderName = sender?.name || senderNumber;
-            // WhatsApp-style push: the server STILL can't read the message. We
-            // send a DATA-ONLY message (no `notification` block) carrying the
-            // encrypted payload. A data-only message wakes the app's
-            // setBackgroundMessageHandler even when backgrounded/killed, so the
-            // device decrypts with its private key and shows the real text via
-            // a local (notifee) notification. Only the recipient's own wrapped
-            // Message Key is included — that's all their device needs to decrypt.
-            // NOTE: a `notification` block would make the OS show the tray item
-            // itself and SUPPRESS the background handler, so we deliberately omit
-            // it. Trade-off: on aggressive OEMs (e.g. MIUI) a killed app may not
-            // run the handler; the message is never lost (it loads on next open).
-            const recipientWrappedKey = encryptedMessageKeys[receiverNumber] || "";
-            const results = await Promise.allSettled(
-              tokens.map((t) =>
-                sendNotification({
-                  data: {
-                    type: "chat",
-                    messageId: String(msg._id),
-                    senderNumber: String(senderNumber),
-                    senderName: String(senderName),
-                    text: String(text), // AES-GCM ciphertext (base64)
-                    nonce: String(nonce), // AES-GCM IV (base64)
-                    encKey: String(recipientWrappedKey), // recipient's sealed Message Key
-                  },
-                  // priority "high" so FCM wakes the device / a killed app
-                  // promptly (normal priority is delayed or dropped in Doze).
-                  android: {
-                    priority: "high",
-                  },
-                  token: t,
-                })
-              )
-            );
-            results.forEach((r, i) => {
-              if (r.status === "fulfilled") {
-                console.log(`[push] sent OK to token #${i}`);
-              } else {
-                console.error(`[push] FCM send FAILED for token #${i}:`, r.reason?.message || r.reason);
-              }
-            });
-          } catch (pushError) {
-            console.error("[push] lookup failed:", pushError.message);
+        try {
+          const user = await UserModel.findOne({ phone: member });
+          if (!user) {
+            console.log(`[push] group member ${member} not found — skipped`);
+            continue;
           }
+          const tokens = await getUserTokens(user._id);
+          console.log(`[push] group ${groupId} member ${member} offline, ${tokens.length} token(s)`);
+          if (!tokens.length) continue;
+          await sendChatPush({
+            tokens,
+            senderNumber,
+            senderName,
+            messageId: msg._id,
+            text,
+            nonce,
+            encKey: encryptedMessageKeys[member],
+            groupId,
+            groupName: group.name,
+          });
+        } catch (pushError) {
+          console.error(`[push] group member ${member} push failed:`, pushError.message);
         }
-      } catch (socketError) {
-        console.error("Live delivery failed, message still saved:", socketError);
+      }
+    } else {
+      // ---- 1:1 delivery (unchanged behavior) ----
+      const senderSocket = connectedSockets[senderNumber];
+      const recipient = await UserModel.findOne({ phone: receiverNumber });
+      const recipientOnline = !!connectedSockets[receiverNumber];
+
+      if (senderSocket) {
+        senderSocket.emit("receive-message", payload);
+        if (recipient && recipient.socketId) {
+          senderSocket.to(recipient.socketId).emit("receive-message", payload);
+        }
+      } else if (recipient && recipient.socketId) {
+        // no sender socket to relay through — deliver via the server
+        global.io.to(recipient.socketId).emit("receive-message", payload);
+      } else {
+        console.log(`No live socket for ${senderNumber} -> ${receiverNumber}`);
       }
 
-      res.status(200).json(new MessageDto(200, `Message send to ${receiverNumber}`, payload));
-    })
-    .catch((error) => {
-      console.error("Error saving message:", error);
-      res
-        .status(500)
-        .send({ error: error, message: "Error sending message.." });
-    });
+      // If the recipient has no live socket, notify them via FCM push so
+      // offline users still get the message.
+      if (!recipient) {
+        console.log(`[push] recipient ${receiverNumber} not found — no push`);
+      } else if (recipientOnline) {
+        console.log(`[push] ${receiverNumber} is ONLINE (live socket) — push skipped by design`);
+      } else {
+        try {
+          const tokens = await getUserTokens(recipient._id);
+          console.log(`[push] ${receiverNumber} offline, ${tokens.length} registered token(s)`);
+          if (tokens.length === 0) {
+            console.log(`[push] no FCM tokens for ${receiverNumber} — their device never registered one (or it was moved to another account on the same device)`);
+          }
+          await sendChatPush({
+            tokens,
+            senderNumber,
+            senderName,
+            messageId: msg._id,
+            text,
+            nonce,
+            encKey: encryptedMessageKeys[receiverNumber],
+          });
+        } catch (pushError) {
+          console.error("[push] lookup failed:", pushError.message);
+        }
+      }
+    }
+  } catch (socketError) {
+    console.error("Live delivery failed, message still saved:", socketError);
+  }
+
+  return res
+    .status(200)
+    .json(
+      new MessageDto(
+        200,
+        groupId ? `Message sent to group ${groupId}` : `Message send to ${receiverNumber}`,
+        payload
+      )
+    );
 };
 
 const updateMessage = async (req, res) => {
@@ -302,9 +424,10 @@ const updateMessage = async (req, res) => {
       return res.status(404).json(new MessageDto(404, `Message not found.`));
     }
 
-    // Real-time: relay the re-encrypted fields to both parties so their open
-    // chat updates immediately; the recipient decrypts the new text locally.
-    emitToUsers([updated.senderNumber, updated.receiverNumber], "message-edited", {
+    // Real-time: relay the re-encrypted fields to every participant so their
+    // open chat updates immediately; each decrypts the new text locally.
+    const audience = await messageAudience(updated);
+    emitToUsers(audience, "message-edited", {
       _id: String(updated._id),
       text: updated.text, // ciphertext
       nonce: updated.nonce,
@@ -312,6 +435,7 @@ const updateMessage = async (req, res) => {
       editedAt: updated.editedAt,
       senderNumber: updated.senderNumber,
       receiverNumber: updated.receiverNumber,
+      groupId: updated.groupId,
     });
 
     res.status(200).json(new MessageDto(200, `Message updated.`, { message: updated }));
@@ -356,12 +480,15 @@ const deleteMessage = async (req, res) => {
         { new: true }
       );
 
-      // Real-time: turn the message into a tombstone on both devices at once.
-      emitToUsers([updated.senderNumber, updated.receiverNumber], "message-deleted", {
+      // Real-time: turn the message into a tombstone on every participant's
+      // device at once.
+      const audience = await messageAudience(updated);
+      emitToUsers(audience, "message-deleted", {
         _id: String(updated._id),
         deletedForAll: true,
         senderNumber: updated.senderNumber,
         receiverNumber: updated.receiverNumber,
+        groupId: updated.groupId,
       });
 
       return res

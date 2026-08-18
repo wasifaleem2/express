@@ -5,7 +5,10 @@ const mongoose = require("mongoose");
 const MessageSchema = new mongoose.Schema(
   {
     senderNumber: { type: String, required: true },
-    receiverNumber: { type: String, required: true },
+    // 1:1 recipient phone. Null for group messages (routing is by groupId).
+    receiverNumber: { type: String, default: null },
+    // Set for group messages; null for 1:1. Fan-out targets the group's members.
+    groupId: { type: String, default: null, index: true },
 
     // ---- E2EE payload ----
     // AES-256-GCM ciphertext of the message body (base64). "" for a tombstone.
