@@ -35,7 +35,7 @@ require('dotenv').config()
 //   - the full service-account JSON (starts with "{") — preferred for cloud
 //     deploys, so the key file never ships in the image, or
 //   - a path to the JSON file (e.g. ./firebase/…adminsdk….json) for local dev.
-// If unset, falls back to the bundled key file (warns instead of crashing).
+// If unset, falls back to the bundled key file (warns instead of crashing). FIREBASE_SERVICE_ACCOUNT_JSON
 function loadServiceAccount() {
   const val = (process.env.FIREBASE_SERVICE_ACCOUNT || '').trim();
   if (val.startsWith('{')) {

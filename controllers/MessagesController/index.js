@@ -219,18 +219,35 @@ const sendMessage = async (req, res) => {
             // message text for plaintext messages (generic for legacy E2EE).
             const sender = await UserModel.findOne({ phone: senderNumber }).select("name");
             const senderName = sender?.name || senderNumber;
-            // E2EE: the server can't read the message, so the push is generic.
-            const notifBody = "🔒 New message";
+            // WhatsApp-style push: the server STILL can't read the message. We
+            // send a DATA-ONLY message (no `notification` block) carrying the
+            // encrypted payload. A data-only message wakes the app's
+            // setBackgroundMessageHandler even when backgrounded/killed, so the
+            // device decrypts with its private key and shows the real text via
+            // a local (notifee) notification. Only the recipient's own wrapped
+            // Message Key is included — that's all their device needs to decrypt.
+            // NOTE: a `notification` block would make the OS show the tray item
+            // itself and SUPPRESS the background handler, so we deliberately omit
+            // it. Trade-off: on aggressive OEMs (e.g. MIUI) a killed app may not
+            // run the handler; the message is never lost (it loads on next open).
+            const recipientWrappedKey = encryptedMessageKeys[receiverNumber] || "";
             const results = await Promise.allSettled(
               tokens.map((t) =>
                 sendNotification({
-                  notification: { title: senderName, body: notifBody },
                   data: {
+                    type: "chat",
+                    messageId: String(msg._id),
                     senderNumber: String(senderNumber),
                     senderName: String(senderName),
-                    body: String(notifBody),
+                    text: String(text), // AES-GCM ciphertext (base64)
+                    nonce: String(nonce), // AES-GCM IV (base64)
+                    encKey: String(recipientWrappedKey), // recipient's sealed Message Key
                   },
-                  android: { notification: { channelId: "default_channel" } },
+                  // priority "high" so FCM wakes the device / a killed app
+                  // promptly (normal priority is delayed or dropped in Doze).
+                  android: {
+                    priority: "high",
+                  },
                   token: t,
                 })
               )
