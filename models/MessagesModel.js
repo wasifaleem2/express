@@ -5,6 +5,9 @@ const mongoose = require("mongoose");
 const MessageSchema = new mongoose.Schema(
   {
     senderNumber: { type: String, required: true },
+    // Client-generated id for this send (stable across offline retries). Lets the
+    // server dedupe when a 200 was lost and the client retries the same message.
+    clientId: { type: String, default: null, index: true },
     // 1:1 recipient phone. Null for group messages (routing is by groupId).
     receiverNumber: { type: String, default: null },
     // Set for group messages; null for 1:1. Fan-out targets the group's members.

@@ -241,6 +241,33 @@ const sendMessage = async (req, res) => {
       ? req.body.encryptedMessageKeys
       : {};
   const replyTo = req.body.replyTo || null;
+  // Stable per-send id from the client (offline outbox). If we already persisted
+  // this exact send (a retry after a lost 200), return it instead of inserting a
+  // duplicate. Fan-out already happened on the first successful save.
+  const clientId = req.body.clientId || null;
+
+  if (clientId) {
+    const existing = await MessageModel.findOne({ senderNumber, clientId });
+    if (existing) {
+      return res.status(200).json(
+        new MessageDto(200, "Already delivered (deduped by clientId).", {
+          _id: String(existing._id),
+          senderNumber: existing.senderNumber,
+          receiverNumber: existing.receiverNumber,
+          groupId: existing.groupId,
+          text: existing.text,
+          nonce: existing.nonce,
+          encryptedMessageKeys: existing.encryptedMessageKeys,
+          dateTime: existing.dateTime,
+          messageType: existing.messageType,
+          replyTo: existing.replyTo,
+          clientId: existing.clientId,
+          deliveredTo: existing.deliveredTo || [],
+          readBy: existing.readBy || [],
+        })
+      );
+    }
+  }
 
   // For group sends, validate the sender is a member and resolve the roster.
   let group = null;
@@ -264,6 +291,7 @@ const sendMessage = async (req, res) => {
 
   const msg = new MessageModel({
     senderNumber,
+    clientId,
     receiverNumber,
     groupId,
     text, // ciphertext, stored verbatim
@@ -286,6 +314,7 @@ const sendMessage = async (req, res) => {
   const payload = {
     _id: String(msg._id),
     senderNumber,
+    clientId,
     receiverNumber,
     groupId,
     text, // ciphertext
