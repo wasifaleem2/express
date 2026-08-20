@@ -70,10 +70,11 @@ databaseConnect();
 // create server
 const server = http.createServer(app);
 
-// creates socketIO server instance use polling for transport
-// and allow cross origin request from cors
+// creates socketIO server instance. Prefer WebSocket (lower latency + battery
+// than long-polling); keep polling as a fallback for networks/proxies that
+// block WS. Azure Container Apps' ingress supports WebSocket upgrades.
 global.io = socketIO(server, {
-  transports: ["polling"],
+  transports: ["websocket", "polling"],
   cors: {
     origin: "*", // or http://localhost:3001 or other for specific origin
   }
