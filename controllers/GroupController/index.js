@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const GroupModel = require("../../models/GroupModel");
 const UserModel = require("../../models/UserModel");
+const MessageModel = require("../../models/MessagesModel");
 const MessageDto = require("../../dtos/messageDto");
 const { connectedSockets } = require("../../utilis/Socket");
 
@@ -73,9 +74,41 @@ const getMyGroups = async (req, res) => {
   try {
     const me = req.user.phone;
     const groups = await GroupModel.find({ members: me }).sort({ updatedAt: -1 });
+
+    // Most-recent message per group (one aggregation), so the list can show a
+    // delivered/read tick for MY last message. Metadata only — text is E2EE.
+    const groupIds = groups.map((g) => g.groupId);
+    const lastByGroup = {};
+    if (groupIds.length) {
+      const lastAgg = await MessageModel.aggregate([
+        { $match: { groupId: { $in: groupIds } } },
+        { $sort: { createdAt: 1 } },
+        { $group: { _id: "$groupId", last: { $last: "$$ROOT" } } },
+      ]);
+      lastAgg.forEach((x) => {
+        lastByGroup[x._id] = x.last;
+      });
+    }
+
+    const groupList = groups.map((g) => {
+      const obj = g.toObject();
+      const lm = lastByGroup[g.groupId];
+      obj.lastMessage = lm
+        ? {
+            senderNumber: lm.senderNumber,
+            dateTime: lm.dateTime,
+            messageType: lm.messageType,
+            deliveredTo: lm.deliveredTo || [],
+            readBy: lm.readBy || [],
+            deletedForAll: lm.deletedForAll || false,
+          }
+        : null;
+      return obj;
+    });
+
     return res
       .status(200)
-      .json(new MessageDto(200, `Groups for user ${me}.`, { groupList: groups }));
+      .json(new MessageDto(200, `Groups for user ${me}.`, { groupList }));
   } catch (error) {
     console.error("getMyGroups failed:", error);
     return res.status(500).json(new MessageDto(500, "Server Error.", error));

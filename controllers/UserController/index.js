@@ -46,6 +46,28 @@ const searchUser = (req, res) => {
     });
 };
 
+// Batch-resolve display names for a set of phone numbers (e.g. group members
+// the caller hasn't 1:1 messaged, so they aren't in recipientList). Returns
+// only { name, phone } — never the password or other profile fields.
+const lookupUsers = (req, res) => {
+  const phones = Array.isArray(req.body.phones)
+    ? req.body.phones.filter(p => typeof p === "string")
+    : [];
+  if (!phones.length) {
+    return res.status(200).json({ data: [] });
+  }
+  UserModel.find({ phone: { $in: phones } })
+    .select("name phone -_id")
+    .exec()
+    .then((users) => {
+      res.status(200).json({ data: users });
+    })
+    .catch((err) => {
+      console.log(err);
+      res.status(500).json({ message: "Server error" });
+    });
+};
+
 const saveUser = async (req, res) => {
   let ph = req.body.phone;
   let name = req.body.name;
@@ -410,6 +432,7 @@ const logout = async (req, res) => {
 module.exports = {
   fetchUsers,
   searchUser,
+  lookupUsers,
   verifyUser,
   login,
   saveUser,

@@ -204,10 +204,43 @@ const getMessagedUsers = async (req, res) => {
       phone: { $in: uniqueContacts },
     }).select("name phone socketId");
 
-    const usersWithMessageCount = users.map((user) => ({
-      ...user.toObject(),
-      count: messageCount.find((m) => m.phone === user.phone)?.count || 0,
-    }));
+    // Most-recent message per contact, so the list can show a delivered/read
+    // tick for MY last message. Metadata only — text stays E2EE (not returned).
+    const lastByContact = {};
+    messages.forEach((m) => {
+      const contact = m.senderNumber === phone ? m.receiverNumber : m.senderNumber;
+      const t = m.createdAt || m.dateTime;
+      const prev = lastByContact[contact];
+      if (!prev || new Date(t) >= new Date(prev._t)) {
+        lastByContact[contact] = {
+          _t: t,
+          senderNumber: m.senderNumber,
+          dateTime: m.dateTime,
+          messageType: m.messageType,
+          deliveredTo: m.deliveredTo || [],
+          readBy: m.readBy || [],
+          deletedForAll: m.deletedForAll || false,
+        };
+      }
+    });
+
+    const usersWithMessageCount = users.map((user) => {
+      const lm = lastByContact[user.phone];
+      return {
+        ...user.toObject(),
+        count: messageCount.find((m) => m.phone === user.phone)?.count || 0,
+        lastMessage: lm
+          ? {
+              senderNumber: lm.senderNumber,
+              dateTime: lm.dateTime,
+              messageType: lm.messageType,
+              deliveredTo: lm.deliveredTo,
+              readBy: lm.readBy,
+              deletedForAll: lm.deletedForAll,
+            }
+          : null,
+      };
+    });
 
     // res.status(200).send(usersWithMessageCount);
     res.status(200).json(new MessageDto(200, `Recipients List for user ${phone}.`, {recipientsList: usersWithMessageCount}));
