@@ -274,31 +274,40 @@ const sendMessage = async (req, res) => {
       ? req.body.encryptedMessageKeys
       : {};
   const replyTo = req.body.replyTo || null;
+  const forwarded = !!req.body.forwarded;
+  const mentions = Array.isArray(req.body.mentions) ? req.body.mentions : [];
   // Stable per-send id from the client (offline outbox). If we already persisted
   // this exact send (a retry after a lost 200), return it instead of inserting a
   // duplicate. Fan-out already happened on the first successful save.
   const clientId = req.body.clientId || null;
 
+  // Respond with an already-saved message (dedupe by clientId). Used both by the
+  // pre-insert check and the E11000 fallback when a concurrent retry won the race.
+  const respondExisting = existing =>
+    res.status(200).json(
+      new MessageDto(200, "Already delivered (deduped by clientId).", {
+        _id: String(existing._id),
+        senderNumber: existing.senderNumber,
+        receiverNumber: existing.receiverNumber,
+        groupId: existing.groupId,
+        text: existing.text,
+        nonce: existing.nonce,
+        encryptedMessageKeys: existing.encryptedMessageKeys,
+        dateTime: existing.dateTime,
+        messageType: existing.messageType,
+        replyTo: existing.replyTo,
+        forwarded: existing.forwarded || false,
+        mentions: existing.mentions || [],
+        clientId: existing.clientId,
+        deliveredTo: existing.deliveredTo || [],
+        readBy: existing.readBy || [],
+      })
+    );
+
   if (clientId) {
     const existing = await MessageModel.findOne({ senderNumber, clientId });
     if (existing) {
-      return res.status(200).json(
-        new MessageDto(200, "Already delivered (deduped by clientId).", {
-          _id: String(existing._id),
-          senderNumber: existing.senderNumber,
-          receiverNumber: existing.receiverNumber,
-          groupId: existing.groupId,
-          text: existing.text,
-          nonce: existing.nonce,
-          encryptedMessageKeys: existing.encryptedMessageKeys,
-          dateTime: existing.dateTime,
-          messageType: existing.messageType,
-          replyTo: existing.replyTo,
-          clientId: existing.clientId,
-          deliveredTo: existing.deliveredTo || [],
-          readBy: existing.readBy || [],
-        })
-      );
+      return respondExisting(existing);
     }
   }
 
@@ -333,11 +342,20 @@ const sendMessage = async (req, res) => {
     dateTime,
     messageType,
     replyTo,
+    forwarded,
+    mentions,
   });
 
   try {
     await msg.save();
   } catch (error) {
+    // Lost the race: a concurrent retry with the same (senderNumber, clientId)
+    // already inserted. The partial unique index rejected this one — return the
+    // winner so the retry is idempotent instead of erroring or duplicating.
+    if (error && error.code === 11000 && clientId) {
+      const existing = await MessageModel.findOne({ senderNumber, clientId });
+      if (existing) return respondExisting(existing);
+    }
     console.error("Error saving message:", error);
     return res
       .status(500)
@@ -356,6 +374,8 @@ const sendMessage = async (req, res) => {
     dateTime,
     messageType,
     replyTo,
+    forwarded,
+    mentions,
     deliveredTo: [],
     readBy: [],
   };
