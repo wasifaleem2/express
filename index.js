@@ -23,7 +23,7 @@ const apiLimiter = rateLimit({
 });
 app.use('/api', apiLimiter);
 const databaseConnect = require("./database/index")
-const {socketConnect} = require("./utilis/Socket");
+const {socketConnect, authenticateSocket} = require("./utilis/Socket");
 const UserModel = require("./models/UserModel");
 const { initializeApp, cert } = require("firebase-admin/app");
 
@@ -80,6 +80,9 @@ global.io = socketIO(server, {
   }
 })
 
+
+// Verify the JWT on every socket handshake before the connection is accepted.
+global.io.use((socket, next) => authenticateSocket(socket, next));
 
 global.io.on('connection', (socket) => socketConnect(socket));
 

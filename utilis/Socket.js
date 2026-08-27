@@ -1,9 +1,38 @@
+const jwt = require("jsonwebtoken");
 const UserModel = require("../models/UserModel");
 const MessageModel = require("../models/MessagesModel");
 const GroupModel = require("../models/GroupModel");
+const AuthModel = require("../models/AuthModel");
+
+// Same signing secret as the REST auth middleware (single source of truth).
+const secret = process.env.JWT_SECRET || "my_secret_key";
 
 let connectedUsers = [];
 let connectedSockets = {};
+
+// Socket.IO handshake auth. The phone a socket acts as is taken from a VERIFIED
+// JWT — never from a client-supplied `userPhone` query param — so a client can't
+// impersonate another user to receive their messages / group updates or emit
+// receipts as them. Mirrors the REST middleware, including revocation: the
+// presented token must still match the one stored for the user at login.
+const authenticateSocket = async (socket, next) => {
+  try {
+    const token =
+      (socket.handshake.auth && socket.handshake.auth.token) ||
+      (socket.handshake.headers.authorization || "").split(" ")[1];
+    if (!token) return next(new Error("unauthorized"));
+
+    const decoded = jwt.verify(token, secret);
+    const auth = await AuthModel.findOne({ phone: decoded.phone });
+    if (!auth || auth.token !== token) return next(new Error("unauthorized"));
+
+    // Pin the identity for the rest of the connection.
+    socket.data.phone = decoded.phone;
+    next();
+  } catch (err) {
+    next(new Error("unauthorized"));
+  }
+};
 
 // Emit an event to every live member of a group (looked up by groupId).
 const emitToRoster = async (groupId, event, payload) => {
@@ -19,7 +48,9 @@ const emitToRoster = async (groupId, event, payload) => {
   }
 };
 const socketConnect = async (socket) => {
-  const userPhone = socket.handshake.query.userPhone;
+  // Identity comes from the verified JWT (set by authenticateSocket), not the
+  // client's query param.
+  const userPhone = socket.data.phone;
   console.log("socket id for new conn ", socket.id);
   console.log("userPhone on connection ", userPhone);
   let user = await UserModel.findOneAndUpdate(
@@ -177,4 +208,4 @@ const socketConnect = async (socket) => {
   });
 };
 
-module.exports = { socketConnect, connectedSockets };
+module.exports = { socketConnect, connectedSockets, authenticateSocket };

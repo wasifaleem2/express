@@ -45,11 +45,10 @@ Secret `"my_secret_key"` is duplicated in `middlewares/authenticate/index.js:2` 
 
 ## P1 — Robustness
 
-### 9. Socket lifecycle & auth gaps (`utilis/Socket.js`) — partially DONE
+### 9. Socket lifecycle & auth gaps (`utilis/Socket.js`) — ✅ DONE
 - ✅ `disconnect` now deletes the `connectedSockets[userPhone]` entry and clears the DB `socketId`.
-- ⏳ The handshake still trusts a client-supplied `userPhone` with no verification.
-- ⏳ Transport is `polling` only (no websocket upgrade).
-- **Remaining fix:** authenticate the handshake with the JWT (`socket.handshake.auth.token`); allow `['websocket','polling']`.
+- ✅ **Handshake authenticated:** `authenticateSocket` (`io.use`) verifies the JWT from `socket.handshake.auth.token` (with `AuthModel` revocation check) and pins `socket.data.phone`; `socketConnect` uses that verified identity instead of the client's `userPhone` query. Closes the impersonation hole. See [CHANGELOG.md](CHANGELOG.md).
+- ✅ Transport now negotiates `['websocket','polling']` (was polling-only).
 
 ### 10. ✅ DONE — Push on new message
 `sendMessage` now looks up the recipient's active tokens (`getUserTokens`) and sends an FCM push when they have no live socket (best-effort).

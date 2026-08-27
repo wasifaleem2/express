@@ -2,6 +2,25 @@
 
 Notable changes to the Express backend, newest first.
 
+## 2026-08 — Socket handshake authentication
+
+- **The Socket.IO handshake now requires a valid JWT.** A new `authenticateSocket` middleware (`utilis/Socket.js`, wired via `io.use` in `index.js`) verifies the token from `socket.handshake.auth.token`, checks it against the stored `AuthModel` token (same revocation rule as the REST middleware), and pins the identity on `socket.data.phone`.
+- **`socketConnect` now derives the user from the verified token**, not the client-supplied `userPhone` query param. This closes an impersonation hole: previously anyone could connect *as any phone* and receive that user's live `receive-message` / `group-updated` events and emit receipts as them. The `userPhone` query is retained for logging only.
+- Clients must now send the JWT in the handshake `auth` (the RN client does this in `createSocketConnectionInstance`); an unauthenticated/invalid handshake is rejected.
+
+## 2026-08 — Group member & admin management
+
+Added membership/admin controls on top of the existing group chat (`GroupController`, `routes/index.js`). All management routes are **admin-gated** via a shared `loadAsAdmin` guard (`404` no group / `403` not an admin).
+
+- **New routes:** `POST /group/:groupId/members` (add), `DELETE /group/:groupId/members/:member` (remove), `POST /group/:groupId/admins/:member` (promote), `DELETE /group/:groupId/admins/:member` (demote), `POST /group/:groupId/leave`. See [API.md](API.md#groups).
+- **Guardrails:** the **owner** (`createdBy`) can't be removed or demoted; `leaveGroup` auto-promotes the first remaining member if the last admin leaves, so a group is never adminless; adds/removes are idempotent (`$addToSet` / `$pull`).
+- **Live sync:** a new `broadcastGroupUpdate` helper emits a **`group-updated`** socket event (over `connectedSockets`) to every member — plus any just-removed or departed phone, so their client drops the group in real time.
+- **E2EE unchanged:** the server still never reads group keys/text. New members see only messages sent **after** they join (clients seal to the updated roster); history isn't re-keyed. *(All paths verified via curl — non-admin add → 403, remove owner → 400, promote/demote, last-admin leave auto-promote.)*
+
+## 2026-08 — Richer message notifications
+
+- **`sendMessage`** now enriches the offline FCM push: it looks up the sender's **name** (`UserModel`) for the notification **title** and uses the message **text** as the **body** (generic `🔒 New message` for legacy E2EE where the server has no plaintext). Adds `senderName`/`body` to the `data` payload and an `android.notification.channelId: "default_channel"` block. `[push]` diagnostic logging retained.
+
 ## 2026-08 — Key rotation (encryption keyring)
 
 - `utilis/encryption.js` now supports a **keyring**: the stored format is

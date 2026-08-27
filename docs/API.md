@@ -110,6 +110,50 @@ Soft-delete a message.
 
 ---
 
+## Groups
+
+Group chat. A group has a `groupId` (`grp_<ObjectId>`), `name`, `members` (phone array), `admins` (phone array, ⊆ members), and `createdBy` (owner phone). Identity always comes from the JWT, never the request body. Membership/admin changes **broadcast a `group-updated` socket event** to every member (and any just-removed/left phone) so clients update live — see the socket table below.
+
+> **E2EE note:** the server never reads group message text or keys. Adding a member means the **clients** start sealing future messages' Message Key to the new member (they read the updated roster); past messages are **not** re-keyed, so a new member can't read history and a removed member keeps only what they already received. No forward secrecy / key rotation in v1.
+
+### POST `/group` — auth
+Create a group. The creator is added automatically and becomes the sole admin/owner.
+- **Body:** `{ name, members: [phone, ...] }` — needs at least one other member.
+- **Responses:** `200 { data: { group } }` · `400` missing name / fewer than 2 members · `500`
+
+### GET `/group/getall` — auth
+List the groups the caller belongs to, most-recent activity first. Each group carries a `lastMessage` **metadata** block (sender, time, `deliveredTo`/`readBy` arrays) for the home-list receipt tick — never the text.
+- **Response:** `200 { data: { groupList } }`
+
+### GET `/group/:groupId` — auth
+Fetch one group. Members only.
+- **Responses:** `200 { data: { group } }` · `403` not a member · `404` not found
+
+### POST `/group/:groupId/members` — auth, **admin**
+Add members (idempotent — phones already in the group are ignored).
+- **Body:** `{ members: [phone, ...] }`
+- **Responses:** `200 { data: { group } }` · `400` no new members · `403` not an admin · `404` group not found · `500`
+
+### DELETE `/group/:groupId/members/:member` — auth, **admin**
+Remove a member (also stripped from `admins`). The **owner can't be removed** (`400`). The removed member is notified via `group-updated` so their client drops the group.
+- **Responses:** `200 { data: { group } }` · `400` owner · `403` not an admin · `404` not a member / group not found
+
+### POST `/group/:groupId/admins/:member` — auth, **admin**
+Promote an existing member to admin.
+- **Responses:** `200 { data: { group } }` · `400` target isn't a member · `403` not an admin · `404` group not found
+
+### DELETE `/group/:groupId/admins/:member` — auth, **admin**
+Demote an admin back to a regular member. The **owner stays an admin** (`400`).
+- **Responses:** `200 { data: { group } }` · `400` owner · `403` not an admin · `404` group not found
+
+### POST `/group/:groupId/leave` — auth
+Leave a group (any member). If the **last admin** leaves a non-empty group, the first remaining member is auto-promoted, so a group is never left adminless.
+- **Responses:** `200 { data: { group } }` · `400` not in the group · `404` not found
+
+> The four admin-gated routes share a `loadAsAdmin` guard: `404` if the group doesn't exist, `403` if the caller isn't in `admins`. *(All group management responses verified end-to-end via curl: non-admin add → 403; remove owner → 400; last-admin leave auto-promotes.)*
+
+---
+
 ## Socket.IO events
 
 Connect with `io(host, { query: { userPhone }, transports: ['polling'] })`.
@@ -122,6 +166,9 @@ Connect with `io(host, { query: { userPhone }, transports: ['polling'] })`.
 | `receive-message` | message object (incl. `_id`) | when a message is sent to you (or echoed to sender) |
 | `message-edited` | `{ _id, text, editedAt, senderNumber, receiverNumber }` | when a message you're in is edited (both parties) |
 | `message-deleted` | `{ _id, deletedForAll, senderNumber, receiverNumber }` | when a message is deleted for everyone (both parties) |
+| `group-updated` | `{ group }` | a group's roster/metadata changed (member added/removed, admin promoted/demoted, member left) — sent to every current member plus any just-removed/left phone |
+
+> **Group messages** reuse `receive-message` — the payload carries a `groupId` field, and the sealed per-member key set travels in `encryptedMessageKeys`. The server relays and stores it verbatim; it never reads group text.
 
 **Client → server**
 | Event | Payload | Effect |
