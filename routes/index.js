@@ -1,6 +1,6 @@
 const router = require("express").Router();
 const rateLimit = require("express-rate-limit");
-const { fetchUsers, verifyUser, login, saveUser, updateUser, deleteUser, deleteAll, logout, searchUser, lookupUsers, pushNotificationTest, registerAppToken, registerPublicKey, getPublicKey, changePassword } = require("../controllers/UserController/index");
+const { fetchUsers, verifyUser, login, saveUser, updateUser, deleteUser, deleteAll, logout, searchUser, searchByNumber, lookupUsers, pushNotificationTest, registerAppToken, registerPublicKey, getPublicKey, changePassword } = require("../controllers/UserController/index");
 const {getMessage, getMessagedUsers, sendMessage, updateMessage, deleteMessage, deleteChat, getAllMessages, getNoOfMessage} = require("../controllers/MessagesController/index")
 const {createGroup, getMyGroups, getGroup, addMembers, removeMember, promoteAdmin, demoteAdmin, leaveGroup} = require("../controllers/GroupController/index")
 //middlewares
@@ -23,6 +23,7 @@ router.post(`/login`, authLimiter, login)
 // FCM token. Removed: DELETE /deleteAll let any logged-in user wipe every user.
 router.get('/users',authenticate, fetchUsers)
 router.get('/search',authenticate, searchUser)
+router.get('/search-by-number',authenticate, searchByNumber)
 router.post('/users/lookup',authenticate, lookupUsers)
 router.put(`/update/:phone`,authenticate, updateUser)
 router.delete(`/delete/:phone`,authenticate, deleteUser)

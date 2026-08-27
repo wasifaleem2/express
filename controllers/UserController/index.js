@@ -6,6 +6,7 @@ const jwt = require("jsonwebtoken");
 const UserDto = require("../../dtos/userDto");
 const sendNotification = require("../../utilis/sendNotification");
 const { saveAppToken, removeAppToken } = require("../../utilis/appTokens");
+const { toE164, toE164Many } = require("../../utilis/phone");
 
 const fetchUsers = (req, res) => {
   // Never expose the password hash to clients.
@@ -46,6 +47,38 @@ const searchUser = (req, res) => {
     });
 };
 
+// Search registered users by PHONE NUMBER ONLY. Names are intentionally not
+// searchable here: a user who isn't saved in the caller's phone contacts can
+// only be found by their number. (The client resolves saved-contact names to
+// numbers locally, then uses /users/lookup.) Used by the New Chat search.
+const searchByNumber = (req, res) => {
+  // Ignore spaces/dashes so "0300 123" matches a stored "0300123".
+  const number = (req.query.number || "").replace(/[\s-]/g, "").trim();
+  if (!number) {
+    return res.status(200).send([]);
+  }
+
+  // Match either the raw stored `phone` (substring — supports partial typing)
+  // or the normalized E.164 key (so "+92300…", "0300…", "92 300 …" all resolve
+  // to the same user). Falling back to `phone` keeps this working for users who
+  // predate the phoneKey backfill.
+  const regex = new RegExp(escapeRegex(number));
+  const or = [{ phone: { $regex: regex } }];
+  const key = toE164(number);
+  if (key) or.push({ phoneKey: key });
+
+  UserModel.find({ $or: or })
+    .select("-password")
+    .exec()
+    .then((userData) => {
+      res.status(200).send(userData);
+    })
+    .catch((err) => {
+      console.log(err);
+      res.status(500).json({ message: "Server error" });
+    });
+};
+
 // Batch-resolve display names for a set of phone numbers (e.g. group members
 // the caller hasn't 1:1 messaged, so they aren't in recipientList). Returns
 // only { name, phone } — never the password or other profile fields.
@@ -56,7 +89,14 @@ const lookupUsers = (req, res) => {
   if (!phones.length) {
     return res.status(200).json({ data: [] });
   }
-  UserModel.find({ phone: { $in: phones } })
+  // Match on the normalized E.164 key (formatting-proof) OR the raw stored
+  // `phone` (exact) as a fallback for users not yet backfilled. The client can
+  // send raw device-book numbers; we normalize them here.
+  const keys = toE164Many(phones);
+  const or = [{ phone: { $in: phones } }];
+  if (keys.length) or.push({ phoneKey: { $in: keys } });
+
+  UserModel.find({ $or: or })
     .select("name phone -_id")
     .exec()
     .then((users) => {
@@ -94,6 +134,7 @@ const saveUser = async (req, res) => {
     name: name,
     password: hashedPassword,
     time: time,
+    phoneKey: toE164(ph),
   });
   user
     .save()
@@ -144,7 +185,7 @@ const login = async (req, res) => {
       const hashedPassword = await bcrypt.hash(password, salt);
       const date = new Date().toISOString();
 
-      const newUser = new UserModel({ phone, name, password: hashedPassword, date, socketId: "" });
+      const newUser = new UserModel({ phone, name, password: hashedPassword, date, socketId: "", phoneKey: toE164(phone) });
       userDetail = await newUser.save();
 
       const token = jwt.sign({ phone }, secretKey, { expiresIn });
@@ -432,6 +473,7 @@ const logout = async (req, res) => {
 module.exports = {
   fetchUsers,
   searchUser,
+  searchByNumber,
   lookupUsers,
   verifyUser,
   login,

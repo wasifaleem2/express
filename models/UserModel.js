@@ -5,6 +5,15 @@ const UserSchema = new mongoose.Schema({
     unique: true,
     required: true,
   },
+  // Canonical E.164 form of `phone` (e.g. "+923001234567"), derived on write.
+  // Additive/optional: `phone` is unchanged and stays the source of truth; this
+  // is only a match key so a number resolves regardless of formatting. Empty
+  // when the number couldn't be normalized — lookups fall back to `phone`.
+  phoneKey: {
+    type: String,
+    default: "",
+    index: true,
+  },
   name: {
     type: String,
     required: true,

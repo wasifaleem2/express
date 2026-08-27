@@ -42,9 +42,21 @@ Returns **all** users, **without** the password hash (`.select('-password')`).
 - **Response:** `200` array of user docs.
 
 ### GET `/search?search=<q>` — auth
-Regex search on `phone`/`name`. Input is escaped before building the `RegExp`; an empty query returns `[]`. Password hash omitted.
+Regex search on `phone`/`name`. Input is escaped before building the `RegExp`; an empty query returns `[]`. Password hash omitted. Used by the group member pickers.
 - **Query:** `search`
 - **Response:** `200` array of matches.
+
+### GET `/search-by-number?number=<q>` — auth
+Search registered users by **phone number only** (name is intentionally not matchable). Matches the raw `phone` (substring, for partial typing) **or** the normalized `phoneKey` (E.164). Spaces/dashes ignored; input escaped; empty query returns `[]`; password hash omitted. Used by the **New Chat** search so a user who isn't in the caller's phone contacts can only be found by number.
+- **Query:** `number`
+- **Response:** `200` array of matches.
+
+### POST `/users/lookup` — auth
+Batch-resolve a set of phone numbers to the registered users among them. Matches on the normalized `phoneKey` (E.164) **or** the raw `phone` (`$in` fallback), so device-book formatting differences don't matter. Returns only `{ name, phone }`. The New Chat search uses this to turn locally name-matched **saved contacts** into app users (names never leave the device).
+- **Body:** `{ phones: [string, ...] }` (raw device numbers are fine — the server normalizes)
+- **Response:** `200 { data: [{ name, phone }] }`
+
+> **`phoneKey`** is a canonical E.164 form of `phone` derived on write (`libphonenumber-js`, local numbers interpreted with `DEFAULT_PHONE_REGION`, default `PK`). It's additive — `phone` is unchanged. Backfill existing users once with `scripts/backfill-phonekey.js`.
 
 ### PUT `/update/:phone` — auth
 Update a user's `name`.

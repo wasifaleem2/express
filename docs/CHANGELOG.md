@@ -2,6 +2,18 @@
 
 Notable changes to the Express backend, newest first.
 
+## 2026-08 — Contact-based New Chat search + E.164 phone normalization
+
+Backs the client's New Chat rule (find saved contacts by name, anyone by number):
+- **New `GET /search-by-number`** (`searchByNumber`) — matches registered users by **phone only**; names are not searchable here. `GET /search` (name + phone) is unchanged and still used by the group member pickers.
+- The client resolves saved-contact **names** to numbers locally (device address book) and calls the existing `POST /users/lookup` to turn them into app users — names are never sent to the server for matching.
+
+**Phone normalization (additive, international-ready, non-breaking):**
+- New **`phoneKey`** field on `UserModel` — the canonical **E.164** form of `phone` (e.g. `+923001234567`), derived on write via new `utilis/phone.js` (`libphonenumber-js`). `phone` is **unchanged** and stays the source of truth; `phoneKey` is only a formatting-proof match key (indexed, defaults to `""`).
+- `searchByNumber` and `lookupUsers` now match `phoneKey` **OR** the raw `phone` (fallback), so the same person resolves regardless of how their number is formatted in a device address book — and users not yet backfilled still work.
+- Local numbers (no country code) are interpreted with **`DEFAULT_PHONE_REGION`** (env, default `PK`); numbers with a country code parse on their own.
+- **Backfill:** `scripts/backfill-phonekey.js` (idempotent) populates `phoneKey` for existing users — run once after deploy. See [API.md](API.md#auth--user).
+
 ## 2026-08 — Socket handshake authentication
 
 - **The Socket.IO handshake now requires a valid JWT.** A new `authenticateSocket` middleware (`utilis/Socket.js`, wired via `io.use` in `index.js`) verifies the token from `socket.handshake.auth.token`, checks it against the stored `AuthModel` token (same revocation rule as the REST middleware), and pins the identity on `socket.data.phone`.
