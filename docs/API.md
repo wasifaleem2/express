@@ -98,12 +98,13 @@ All messages touching `phone`.
 - **Response:** `200` array.
 
 ### GET `/message/getusers` — auth
-Contact list for the authed user, with per-contact unread counts (messages still in `status:"send"`), joined against `users` (projecting `name phone socketId`).
+Contact list for the authed user, with per-contact unread counts (messages still in `status:"send"`), joined against `users` (projecting `name phone socketId`). Each contact also carries a `lastMessage` **metadata** block (`senderNumber`, `dateTime`, `messageType`, `deliveredTo`/`readBy` arrays, `deletedForAll`) for the home-list delivered/read tick — never the text.
 - **Response:** `200` `recipientsList`.
 
 ### POST `/message/send` — auth, checkUser
 Persist a message, then best-effort live-deliver over socket. If the recipient has **no live socket**, an FCM push is sent to their active device tokens (best-effort; never fails the save).
-- **Body:** `{ senderNumber, receiverNumber, text, dateTime, messageType? }`
+- **Body:** `{ senderNumber, receiverNumber | groupId, text, nonce, encryptedMessageKeys, messageType?, replyTo?, clientId?, forwarded?, mentions? }` — `text`/`nonce`/`encryptedMessageKeys` are the E2EE payload (stored opaquely); `dateTime` is **server-stamped** and ignored from the client. `forwarded` marks a forwarded message; `mentions` is a phone-number array of group @mentions.
+- **Dedupe:** if `clientId` is present and a message with the same `(senderNumber, clientId)` already exists, the existing one is returned instead of inserting a duplicate. A partial unique index on `{ senderNumber, clientId }` also makes this race-safe — a concurrent retry that loses the race is caught (E11000) and returned the winner.
 - **Response:** `200` saved message. Socket/push failures do not fail the save.
 
 ### PUT `/message/update/:id` — auth

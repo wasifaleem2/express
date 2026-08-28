@@ -2,6 +2,12 @@
 
 Notable changes to the Express backend, newest first.
 
+## 2026-08 — Forward/mention message fields, send-dedupe hardening & chat-list last message
+
+- **`forwarded` (Boolean) and `mentions` (String[]) fields** added to `MessageModel`. `sendMessage` reads both from the request body, persists them, and includes them in the returned payload + the `receive-message` socket broadcast, so forwarded flags and group @mentions travel to recipients.
+- **DB-level send dedupe (race fix).** Added a **partial unique index** on `{ senderNumber, clientId }` (partial — enforced only when `clientId` is a string, so the many `clientId: null` rows are exempt). `sendMessage` now catches the **E11000** duplicate-key error from a concurrent retry and returns the already-saved message via `respondExisting`, instead of the previous racy `findOne`-then-insert that could let two simultaneous retries both insert.
+- **Last-message metadata on the conversation lists.** `getMessagedUsers` (1:1) and `getMyGroups` (groups) now attach a `lastMessage` per conversation — `senderNumber`, `dateTime`, `messageType`, `deliveredTo`, `readBy`, `deletedForAll` — so the client can render a delivered/read tick on the chat list. Metadata only: the message **text stays encrypted and is never returned**.
+
 ## 2026-08 — Contact-based New Chat search + E.164 phone normalization
 
 Backs the client's New Chat rule (find saved contacts by name, anyone by number):

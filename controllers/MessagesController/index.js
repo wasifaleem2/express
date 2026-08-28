@@ -47,6 +47,7 @@ const sendChatPush = async ({
   encKey,
   groupId,
   groupName,
+  mentioned,
 }) => {
   const data = {
     type: "chat",
@@ -56,6 +57,9 @@ const sendChatPush = async ({
     text: String(text), // AES-GCM ciphertext (base64)
     nonce: String(nonce), // AES-GCM IV (base64)
     encKey: String(encKey || ""), // this recipient's sealed Message Key
+    // "true" only for a group member who was @mentioned — the client then shows
+    // a distinct "mentioned you" notification on the high-importance channel.
+    mentioned: mentioned ? "true" : "false",
   };
   if (groupId) {
     data.groupId = String(groupId);
@@ -416,6 +420,7 @@ const sendMessage = async (req, res) => {
             encKey: encryptedMessageKeys[member],
             groupId,
             groupName: group.name,
+            mentioned: mentions.includes(member),
           });
         } catch (pushError) {
           console.error(`[push] group member ${member} push failed:`, pushError.message);
