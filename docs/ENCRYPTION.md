@@ -63,10 +63,24 @@ Controllers — [`controllers/MessagesController/index.js`](../controllers/Messa
 ```
 A DB dump yields only this — never the message text.
 
+## Images
+Image attachments reuse the message's own Message Key: the device encrypts each
+image (AES-256-GCM, blob = `iv(12) ‖ ciphertext`) and uploads it straight to a
+**private** Azure Blob container using a 10-minute write-only SAS link from
+`POST /api/media/upload-urls`. The message stores only the blob names in
+`images`. Since the key is already wrapped per member in `encryptedMessageKeys`,
+anyone who can read the caption can read the images — and nobody else. Neither the
+server nor Azure can view them. Readers get 10-minute read-only links from
+`POST /api/media/read-urls` (membership-checked).
+
+Documents work the same way (`documents` = blob names). Their file names,
+sizes and types travel in `documentMeta`, also encrypted with the Message Key,
+so the server never learns what a file is called.
+
 ## Can / cannot see
 | Can see (metadata) | Cannot see |
 |---|---|
-| who ↔ whom, timestamps, type, delivery/read status, public keys | message **text**, any **private key**, the per-message **Message Key** |
+| who ↔ whom, timestamps, type, delivery/read status, public keys | message **text**, **image contents**, any **private key**, the per-message **Message Key** |
 
 ## Operational notes
 - The `/keys` endpoints **must be present in the deployed image**. If a stale

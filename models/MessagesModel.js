@@ -34,6 +34,14 @@ const MessageSchema = new mongoose.Schema(
     forwarded: { type: Boolean, default: false },
     // Phone numbers @mentioned in a group message.
     mentions: { type: [String], default: [] },
+    // Blob names of attached images (messageType "image"). Each blob is
+    // encrypted on the device with this message's Message Key; [] for text.
+    images: { type: [String], default: [], index: true },
+    // Blob names of attached documents (messageType "document"), same scheme.
+    documents: { type: [String], default: [], index: true },
+    // The documents' file names/sizes/types as JSON, encrypted on the device with
+    // the Message Key (base64 iv ‖ ciphertext) — opaque to the server.
+    documentMeta: { type: String, default: "" },
 
     // Delivery / read tracking (group-ready: arrays of member phone numbers).
     status: { type: String, default: "send" },

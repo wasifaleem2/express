@@ -2,6 +2,7 @@ const router = require("express").Router();
 const rateLimit = require("express-rate-limit");
 const { fetchUsers, verifyUser, login, saveUser, updateUser, deleteUser, deleteAll, logout, searchUser, searchByNumber, lookupUsers, pushNotificationTest, registerAppToken, registerPublicKey, getPublicKey, changePassword } = require("../controllers/UserController/index");
 const {getMessage, getMessagedUsers, sendMessage, updateMessage, deleteMessage, deleteChat, getAllMessages, getNoOfMessage} = require("../controllers/MessagesController/index")
+const {getLimits, createUploadUrls, createReadUrls} = require("../controllers/MediaController/index")
 const {createGroup, getMyGroups, getGroup, addMembers, removeMember, promoteAdmin, demoteAdmin, leaveGroup} = require("../controllers/GroupController/index")
 //middlewares
 const authenticate = require("../middlewares/authenticate/index")
@@ -34,6 +35,11 @@ router.post(`/change-password`,authenticate, changePassword)
 // E2EE key exchange
 router.post(`/keys`, authenticate, registerPublicKey)
 router.get(`/keys/:phone`, authenticate, getPublicKey)
+
+// urls for media 
+router.get('/media/limits', authenticate, getLimits)
+router.post('/media/upload-urls', authenticate, createUploadUrls)
+router.post('/media/read-urls', authenticate, createReadUrls)
 
 //messages routes
 router.get('/message/no-of-messages', authenticate, getNoOfMessage)

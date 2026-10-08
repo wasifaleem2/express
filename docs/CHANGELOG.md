@@ -2,6 +2,22 @@
 
 Notable changes to the Express backend, newest first.
 
+## 2026-10 — Document messages, 4-attachment limit, missing-file handling
+
+- **Documents** — `MessagesModel.documents` (blob names) + `documentMeta` (file names/sizes/types as JSON, **encrypted on the device** with the Message Key — opaque to the server). `sendMessage` validates documents exactly like images, saves/relays both fields, and rejects a message carrying images **and** documents (`400`). Any file type is allowed — the server never inspects contents.
+- **Limit: 4** images or 4 documents per message (`MAX_ATTACHMENTS` in `utilis/media.js`; also caps `/media/upload-urls` `count` and `/media/read-urls` `names`).
+- **Size limit is server-only** — `MEDIA_MAX_BYTES` (default 10,000 KB, original file size; the 28-byte encryption overhead is allowed for) is published at new `GET /media/limits` so the app warns before uploading.
+- **Read access / cleanup** cover documents too: `/media/read-urls` grants access via `images` **or** `documents`; delete-for-everyone and delete-chat remove both kinds of blobs.
+- `utilis/media.js` helpers renamed to be type-neutral (`normalizeNames`, `validateUploadsForSend`, `readableMedia`, `deleteBlobs`, `newBlobName`).
+
+## 2026-10 — Image messages (Azure Blob Storage, E2EE)
+
+- **`images` on messages** — `MessagesModel.images` (blob names, default `[]`). `sendMessage` accepts `images` (null / `""` / missing ⇒ `[]`), checks each is the caller's own upload, exists and is within `MEDIA_MAX_BYTES`, then saves and relays it (`receive-message`, dedupe echo). The FCM data push now carries `messageType` so devices show "📷 Photo".
+- **New media routes** — `POST /media/upload-urls` (write-only SAS links) and `POST /media/read-urls` (membership-checked read-only links). See [API.md](API.md#media-image--document-attachments).
+- **New files** — `utilis/blobStorage.js` (Azure SDK wrapper, `@azure/storage-blob`), `utilis/media.js` (naming, validation, access, cleanup), `controllers/MediaController`.
+- **Cleanup** — delete-for-everyone clears `images` and deletes the blobs; delete-chat deletes the conversation's blobs.
+- **Env** — `AZURE_STORAGE_CONNECTION_STRING`, `AZURE_MEDIA_CONTAINER` (default `media`), `MEDIA_MAX_BYTES` (default 8 MB). Media is disabled (503) without the connection string. Also fixed docs: the DB variable is `DATABASE_URL` (not `LOCAL_DB_URL`), and the removed `MESSAGE_ENC_KEY*` variables are gone from the env table.
+
 ## 2026-08 — Forward/mention message fields, send-dedupe hardening & chat-list last message
 
 - **`forwarded` (Boolean) and `mentions` (String[]) fields** added to `MessageModel`. `sendMessage` reads both from the request body, persists them, and includes them in the returned payload + the `receive-message` socket broadcast, so forwarded flags and group @mentions travel to recipients.

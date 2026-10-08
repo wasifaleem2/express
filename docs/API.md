@@ -103,7 +103,7 @@ Contact list for the authed user, with per-contact unread counts (messages still
 
 ### POST `/message/send` — auth, checkUser
 Persist a message, then best-effort live-deliver over socket. If the recipient has **no live socket**, an FCM push is sent to their active device tokens (best-effort; never fails the save).
-- **Body:** `{ senderNumber, receiverNumber | groupId, text, nonce, encryptedMessageKeys, messageType?, replyTo?, clientId?, forwarded?, mentions? }` — `text`/`nonce`/`encryptedMessageKeys` are the E2EE payload (stored opaquely); `dateTime` is **server-stamped** and ignored from the client. `forwarded` marks a forwarded message; `mentions` is a phone-number array of group @mentions.
+- **Body:** `{ senderNumber, receiverNumber | groupId, text, nonce, encryptedMessageKeys, messageType?, replyTo?, clientId?, forwarded?, mentions? }` — `text`/`nonce`/`encryptedMessageKeys` are the E2EE payload (stored opaquely); `dateTime` is **server-stamped** and ignored from the client. `messageType` is `text`, `image`, `document` or `location` (for `location` the encrypted `text` holds the coordinates — the server stores it like any text). `forwarded` marks a forwarded message; `mentions` is a phone-number array of group @mentions. `images` is an array of up to 4 **blob names** from `POST /media/upload-urls` (encrypted on the device; see Media below) — send `null`, `""` or omit it for a text message (stored as `[]`). `documents` works the same for files (up to 4), with `documentMeta` = the files' names/sizes/types encrypted by the device (opaque string). A message may carry images **or** documents, not both (`400`). Each name must be the caller's own upload and exist in storage (`400`; over `MEDIA_MAX_BYTES` → `413`).
 - **Dedupe:** if `clientId` is present and a message with the same `(senderNumber, clientId)` already exists, the existing one is returned instead of inserting a duplicate. A partial unique index on `{ senderNumber, clientId }` also makes this race-safe — a concurrent retry that loses the race is caught (E11000) and returned the winner.
 - **Response:** `200` saved message. Socket/push failures do not fail the save.
 
@@ -122,6 +122,27 @@ Soft-delete a message.
 > `deleteChat` (deletes **all** messages via `deleteMany({})`) exists in the controller but is **not routed**.
 
 ---
+
+## Media (image & document attachments)
+
+Images are encrypted **on the device** with the message's own Message Key and uploaded **directly** to a private Azure Blob container; the server only issues short-lived (10 min) SAS links and never sees image content. Both routes return `503` if `AZURE_STORAGE_CONNECTION_STRING` is unset.
+
+### GET `/media/limits` — auth
+The attachment limits, so the app can warn before uploading. The size limit is set **only** here, by the `MEDIA_MAX_BYTES` env var.
+- **Response:** `200 { data: { maxFileBytes, maxAttachments } }` — `maxFileBytes` is the largest original file size; `maxAttachments` is 4.
+
+### POST `/media/upload-urls` — auth
+Get write-only upload links. The device then `PUT`s each encrypted image (`iv ‖ ciphertext`) to its `uploadUrl` with header `x-ms-blob-type: BlockBlob`, and sends the message with `images: [name, ...]`.
+- **Body:** `{ count }` (1–4)
+- **Response:** `200 { data: { uploads: [{ name, uploadUrl }] } }` · `400` bad count
+- Names look like `u/<sha256(phone) prefix>/<uuid>` — the prefix ties a blob to its uploader.
+
+### POST `/media/read-urls` — auth
+Get read-only download links for images the caller may see: their own uploads, or files (`images`/`documents`) on a non-deleted message they sent/received or that went to a group they're in. Names the caller can't read are left out.
+- **Body:** `{ names: [name, ...] }` (up to 4)
+- **Response:** `200 { data: { urls: { [name]: url } } }`
+
+> **Cleanup:** delete-for-everyone and delete-chat remove the message's blobs. Uploads never attached to a sent message are not cleaned up yet.
 
 ## Groups
 

@@ -9,6 +9,12 @@ const { connectedSockets } = require("../../utilis/Socket");
 const MessageDto = require("../../dtos/messageDto");
 const { getUserTokens } = require("../../utilis/appTokens");
 const sendNotification = require("../../utilis/sendNotification");
+const {
+  MAX_ATTACHMENTS,
+  normalizeNames,
+  validateUploadsForSend,
+  deleteBlobs,
+} = require("../../utilis/media");
 
 // Emit a socket event to each given phone number that has a live socket.
 // Used to push edits/deletes to both parties (or every group member) in real time.
@@ -48,10 +54,12 @@ const sendChatPush = async ({
   groupId,
   groupName,
   mentioned,
+  messageType,
 }) => {
   const data = {
     type: "chat",
     messageId: String(messageId),
+    messageType: String(messageType || "text"),
     senderNumber: String(senderNumber),
     senderName: String(senderName),
     text: String(text), // AES-GCM ciphertext (base64)
@@ -280,6 +288,24 @@ const sendMessage = async (req, res) => {
   const replyTo = req.body.replyTo || null;
   const forwarded = !!req.body.forwarded;
   const mentions = Array.isArray(req.body.mentions) ? req.body.mentions : [];
+  // Blob names of encrypted images / documents uploaded by the device before
+  // this send. null / "" / missing => [] (plain text message).
+  const images = normalizeNames(req.body.images);
+  const documents = normalizeNames(req.body.documents);
+  if (!images || !documents) {
+    return res
+      .status(400)
+      .json(new MessageDto(400, `images / documents must be arrays of up to ${MAX_ATTACHMENTS} names.`));
+  }
+  // One kind of attachment per message.
+  if (images.length && documents.length) {
+    return res
+      .status(400)
+      .json(new MessageDto(400, "A message can carry images or documents, not both."));
+  }
+  // Encrypted file names/sizes/types for the documents (opaque to the server).
+  const documentMeta =
+    documents.length && typeof req.body.documentMeta === "string" ? req.body.documentMeta : "";
   // Stable per-send id from the client (offline outbox). If we already persisted
   // this exact send (a retry after a lost 200), return it instead of inserting a
   // duplicate. Fan-out already happened on the first successful save.
@@ -302,6 +328,9 @@ const sendMessage = async (req, res) => {
         replyTo: existing.replyTo,
         forwarded: existing.forwarded || false,
         mentions: existing.mentions || [],
+        images: existing.images || [],
+        documents: existing.documents || [],
+        documentMeta: existing.documentMeta || "",
         clientId: existing.clientId,
         deliveredTo: existing.deliveredTo || [],
         readBy: existing.readBy || [],
@@ -327,6 +356,17 @@ const sendMessage = async (req, res) => {
     }
   }
 
+  // Each image must be the caller's own upload, present and within the size cap.
+  try {
+    const invalid = await validateUploadsForSend([...images, ...documents], req.user.phone);
+    if (invalid) {
+      return res.status(invalid.status).json(new MessageDto(invalid.status, invalid.message));
+    }
+  } catch (error) {
+    console.error("[media] image validation failed:", error.message);
+    return res.status(500).json(new MessageDto(500, "Could not verify attachments."));
+  }
+
   console.log(
     "message received (e2ee):",
     dateTime,
@@ -348,6 +388,9 @@ const sendMessage = async (req, res) => {
     replyTo,
     forwarded,
     mentions,
+    images,
+    documents,
+    documentMeta,
   });
 
   try {
@@ -380,6 +423,9 @@ const sendMessage = async (req, res) => {
     replyTo,
     forwarded,
     mentions,
+    images,
+    documents,
+    documentMeta,
     deliveredTo: [],
     readBy: [],
   };
@@ -421,6 +467,7 @@ const sendMessage = async (req, res) => {
             groupId,
             groupName: group.name,
             mentioned: mentions.includes(member),
+            messageType,
           });
         } catch (pushError) {
           console.error(`[push] group member ${member} push failed:`, pushError.message);
@@ -465,6 +512,7 @@ const sendMessage = async (req, res) => {
             text,
             nonce,
             encKey: encryptedMessageKeys[receiverNumber],
+            messageType,
           });
         } catch (pushError) {
           console.error("[push] lookup failed:", pushError.message);
@@ -563,9 +611,14 @@ const deleteMessage = async (req, res) => {
           text: "",
           nonce: "",
           encryptedMessageKeys: {},
+          images: [],
+          documents: [],
+          documentMeta: "",
         },
         { new: true }
       );
+      // The tombstone no longer references its images — remove the blobs.
+      deleteBlobs([...(message.images || []), ...(message.documents || [])]);
 
       // Real-time: turn the message into a tombstone on every participant's
       // device at once.
@@ -606,12 +659,19 @@ const deleteChat = async (req, res) => {
       return res.status(400).json(new MessageDto(400, `Recipient is required.`));
     }
 
-    const result = await MessageModel.deleteMany({
+    const conversation = {
       $or: [
         { senderNumber: me, receiverNumber: recipient },
         { senderNumber: recipient, receiverNumber: me },
       ],
-    });
+    };
+    // Collect attached image blobs first so they can be removed with the rows.
+    const withImages = await MessageModel.find({
+      ...conversation,
+      $or: [{ "images.0": { $exists: true } }, { "documents.0": { $exists: true } }],
+    }).select("images documents");
+    const result = await MessageModel.deleteMany(conversation);
+    deleteBlobs(withImages.flatMap((m) => [...(m.images || []), ...(m.documents || [])]));
 
     // Let the other party's open chat update in real time if they're online.
     emitToUsers([me, recipient], "chat-deleted", { by: me, with: recipient });

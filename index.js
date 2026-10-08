@@ -31,6 +31,9 @@ const { initializeApp, cert } = require("firebase-admin/app");
 // load env 
 require('dotenv').config()
 
+// Azure Blob Storage for encrypted image attachments (disabled if unconfigured).
+require('./utilis/blobStorage').init();
+
 // FIREBASE_SERVICE_ACCOUNT accepts EITHER:
 //   - the full service-account JSON (starts with "{") — preferred for cloud
 //     deploys, so the key file never ships in the image, or
@@ -44,7 +47,7 @@ function loadServiceAccount() {
   const path = require('path');
   const file =
     val ||
-    './firebase/app-notification-ec741-firebase-adminsdk-fbsvc-92936dea08.json';
+    './firebase/app-notification-ec741-firebase-adminsdk-fbsvc-2a72a4b4e5.json';
   return require(path.resolve(file)); // treat as a file path
 }
 

@@ -18,7 +18,7 @@ Node/Express + Socket.IO + MongoDB (Mongoose) chat backend with Firebase Cloud M
 | Path | Role |
 |---|---|
 | `index.js` | Entry point: Express app, HTTP server, Socket.IO, CORS, Firebase init, Mongo connect, port from `PORT` |
-| `database/index.js` | Mongoose connection using `process.env.LOCAL_DB_URL` |
+| `database/index.js` | Mongoose connection using `process.env.DATABASE_URL` |
 | `routes/index.js` | Single router mounted at `/api` — every endpoint |
 | `controllers/UserController/index.js` | Auth + user CRUD + notification + app-token handlers |
 | `controllers/MessagesController/index.js` | Message send/fetch/update/delete handlers |
@@ -126,7 +126,7 @@ Module state:
 
 | What | Where | Value |
 |---|---|---|
-| Mongo URL | `.env` → `LOCAL_DB_URL` | `mongodb://localhost:27017/mukhar` |
+| Mongo URL | `.env` → `DATABASE_URL` | `mongodb://localhost:27017/mukhar` |
 | Firebase key path | env `FIREBASE_SERVICE_ACCOUNT` or hardcoded default | `./firebase/…-adminsdk-…json` |
 | Port | `.env` → `PORT` (default 3002) | `3002` |
 | CORS | `index.js` | `*` (HTTP and sockets) — still open |
