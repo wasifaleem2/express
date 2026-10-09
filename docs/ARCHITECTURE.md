@@ -21,7 +21,9 @@ Node/Express + Socket.IO + MongoDB (Mongoose) chat backend with Firebase Cloud M
 | `database/index.js` | Mongoose connection using `process.env.DATABASE_URL` |
 | `routes/index.js` | Single router mounted at `/api` — every endpoint |
 | `controllers/UserController/index.js` | Auth + user CRUD + notification + app-token handlers |
-| `controllers/MessagesController/index.js` | Message send/fetch/update/delete handlers |
+| `controllers/MessagesController/index.js` | Message send/fetch/update/delete handlers (validates + relays `images`/`documents`, deletes their blobs on delete-for-everyone / delete-chat) |
+| `controllers/MediaController/index.js` | Attachment endpoints: `GET /media/limits`, `POST /media/upload-urls`, `POST /media/read-urls` |
+| `controllers/GroupController/index.js` | Group create/list/get + member & admin management |
 | `models/UserModel.js` | `users` collection (phone, name, password, time, socketId) |
 | `models/AuthModel.js` | `token` collection (phone → JWT) |
 | `models/MessagesModel.js` | `messages` collection |
@@ -31,6 +33,8 @@ Node/Express + Socket.IO + MongoDB (Mongoose) chat backend with Firebase Cloud M
 | `utilis/Socket.js` | Socket.IO connection handler, `connectedSockets` map, events (note: folder name is a typo for `utils`) |
 | `utilis/appTokens.js` | FCM token save/remove/get helpers |
 | `utilis/sendNotification.js` | Wraps `firebase-admin` messaging `.send()` |
+| `utilis/blobStorage.js` | Azure Blob Storage wrapper (`@azure/storage-blob`): init from env, 10-min write/read SAS links, blob size, delete |
+| `utilis/media.js` | Attachment rules: owner-prefixed blob names, `MAX_ATTACHMENTS` (4), `MEDIA_MAX_BYTES`, send-time validation, read access, blob cleanup |
 | `dtos/userDto.js`, `dtos/messageDto.js` | Response envelope classes `{status, message, data}` |
 | `firebase/…-adminsdk-…json` | FCM service-account key (gitignored) |
 | `mongoose.txt` | Dead commented-out old route code (not loaded) |
@@ -75,6 +79,16 @@ Relationships are **weak**: messages and users are linked only by matching phone
 
 ### `MessagesModel` → `messages`
 `senderNumber`, `receiverNumber`, `text`, `dateTime` (all required strings), `messageType` (default `"text"`), `status` (default `"send"` → `"read"`), `editedAt` (Date, set when a message is edited), and soft-delete tracking — `deletedForAll` (bool) + `deletedForAllAt` (Date) for "delete for everyone", `deletedFor` (array of phone numbers) for per-user "delete for me" — plus `createdAt`/`updatedAt` (`timestamps: true`). No user refs (linked by phone string).
+
+Attachments (all opaque to the server — see [ENCRYPTION.md](ENCRYPTION.md)):
+- `messageType` — `text`, `image`, `document` or `location` (a location's coordinates are inside the encrypted `text`).
+- `images` — blob names of encrypted photos (max 4).
+- `documents` — blob names of encrypted files (max 4); a message has images **or** documents.
+- `documentMeta` — the documents' names/sizes/types, encrypted by the device.
+
+## Attachments (Azure Blob Storage)
+
+Files never pass through Express. The device encrypts each photo/document with the message's key, asks `POST /media/upload-urls` for 10-minute write-only SAS links, PUTs the ciphertext straight to a **private** container, then sends the normal message with the blob names. Blob names are `u/<sha256(phone) prefix>/<uuid>`, so the server can check a sender only attaches their own uploads (`validateUploadsForSend`: right owner, blob exists, ≤ `MEDIA_MAX_BYTES`). Viewers get 10-minute read-only links from `POST /media/read-urls`, granted only for files on a message they can see. Blobs are deleted when their message is deleted for everyone or the chat is deleted. Uploads that were never sent are not cleaned up yet.
 
 ### `TokenModel` → `apptokens` + `userAppTokens`
 - `apptokens`: `token` (unique), `platform`, `isActive`, timestamps.
@@ -132,5 +146,8 @@ Module state:
 | CORS | `index.js` | `*` (HTTP and sockets) — still open |
 | JWT secret | `.env` → `JWT_SECRET` | (dev fallback: `my_secret_key`) |
 | JWT expiry | `.env` → `JWT_EXPIRES_IN` | `30d` |
+| Blob storage | `.env` → `AZURE_STORAGE_CONNECTION_STRING` (secret), `AZURE_MEDIA_CONTAINER` | unset ⇒ attachments disabled (503) |
+| Attachment size limit | `.env` → `MEDIA_MAX_BYTES` | `10240000` (10,000 KB) — the app reads it from `GET /media/limits` |
+| Phone region | `.env` → `DEFAULT_PHONE_REGION` | `PK` |
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) to run it and [API.md](API.md) for the endpoint reference. Known issues and the improvement backlog are in [IMPROVEMENTS.md](IMPROVEMENTS.md).

@@ -77,6 +77,13 @@ Many handlers `console.log` the raw Mongo error and return it in the response bo
 - **Docker:** enable/repair `docker-compose.yml`; tighten `.dockerignore` to exclude `.env` and `firebase/`.
 - **Logging:** replace scattered `console.log` with a logger (pino/winston) and levels.
 
+## Attachments — follow-ups
+
+- **Clean up abandoned uploads:** files uploaded but never sent (send failed, retry re-uploaded) stay in Blob Storage. Add a periodic job that deletes blobs no message references, or an Azure lifecycle **delete** rule on old blobs.
+- **Forwarding re-uploads:** each forward stores a new encrypted copy. If forwarding gets heavy, switch to per-file keys + shared blobs with reference-counted deletes.
+- **`AZURE_MEDIA_CONTAINER` has no default:** if it's unset while the connection string is set, uploads fail at runtime — treat it like a missing connection string (disable media with a warning).
+- **Caption edit, video, voice notes** are not supported yet.
+
 ---
 
 ## Suggested order

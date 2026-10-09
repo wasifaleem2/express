@@ -77,10 +77,13 @@ Documents work the same way (`documents` = blob names). Their file names,
 sizes and types travel in `documentMeta`, also encrypted with the Message Key,
 so the server never learns what a file is called.
 
+Locations need nothing extra: a `location` message's coordinates are its
+encrypted `text`, so the server stores them like any message body.
+
 ## Can / cannot see
 | Can see (metadata) | Cannot see |
 |---|---|
-| who ↔ whom, timestamps, type, delivery/read status, public keys | message **text**, **image contents**, any **private key**, the per-message **Message Key** |
+| who ↔ whom, timestamps, type, delivery/read status, public keys | message **text**, **image / document contents and file names**, **shared locations**, any **private key**, the per-message **Message Key** |
 
 ## Operational notes
 - The `/keys` endpoints **must be present in the deployed image**. If a stale
